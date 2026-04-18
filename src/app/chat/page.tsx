@@ -14,7 +14,7 @@ import {
   Upload,
 } from "lucide-react";
 import { BottomNav } from "@/components/BottomNav";
-import { Button } from "@/components/ui/button";
+import { ImageSourceSheet } from "@/components/image-source-sheet";
 import { toast } from "sonner";
 import { processImageFile } from "@/lib/image-utils";
 import { getCurrentUser } from "@/lib/auth-local";
@@ -175,8 +175,9 @@ function saveJsonArray(key: string, value: unknown[]): void {
 export default function ChatPage() {
   const router = useRouter();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const replaceUploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadLibraryInputRef = useRef<HTMLInputElement>(null);
+  const uploadCameraInputRef = useRef<HTMLInputElement>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
 
   const [mounted, setMounted] = useState(false);
@@ -195,6 +196,7 @@ export default function ChatPage() {
   const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [pendingActionLabel, setPendingActionLabel] = useState<string | null>(null);
+  const [showUploadPicker, setShowUploadPicker] = useState(false);
 
   const slashQuery = inputValue.startsWith("/") ? inputValue.slice(1).trim() : "";
   const shouldShowSlashSuggestions = inputValue.startsWith("/");
@@ -674,9 +676,17 @@ export default function ChatPage() {
       ]);
     } finally {
       setIsUploading(false);
-      if (uploadInputRef.current) {
-        uploadInputRef.current.value = "";
-      }
+      [uploadLibraryInputRef, uploadCameraInputRef, uploadFileInputRef].forEach((ref) => {
+        if (ref.current) {
+          ref.current.value = "";
+        }
+      });
+    }
+  };
+
+  const openChatUploadPicker = () => {
+    if (!isLoading && !isUploading) {
+      setShowUploadPicker(true);
     }
   };
 
@@ -693,7 +703,7 @@ export default function ChatPage() {
   if (!mounted || !isInitialized) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-accent mb-4" />
+        <Loader2 className="mb-4 h-8 w-8 animate-spin text-[#e11d78]" />
         <p className="text-gray-500">加载中...</p>
       </div>
     );
@@ -710,8 +720,8 @@ export default function ChatPage() {
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-accent" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ffe5f1]">
+              <Sparkles className="h-4 w-4 text-[#e11d78]" />
             </div>
             <span className="font-semibold">AI 穿搭</span>
           </div>
@@ -719,8 +729,8 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <div className="bg-accent/5 px-4 py-2 border-b border-accent/10">
-        <p className="text-sm text-accent">
+      <div className="border-b border-[#ffd6e8] bg-[#fff5fa] px-4 py-2">
+        <p className="text-sm text-[#c0266b]">
           {selectedAvatars.length > 0 && wardrobeItems.length > 0
             ? `已就绪：${wardrobeItems.length} 件衣服 + ${selectedAvatars.length} 张人像。输入 / 可选常用诉求，也能锁定某件单品。`
             : `还差素材：${selectedAvatars.length === 0 ? "本人照" : ""}${selectedAvatars.length === 0 && wardrobeItems.length === 0 ? " + " : ""}${wardrobeItems.length === 0 ? "衣服照片" : ""}。可直接在聊天框左侧上传。`}
@@ -736,7 +746,7 @@ export default function ChatPage() {
               <button
                 key={avatar.id}
                 onClick={() => toggleAvatarSelection(avatar)}
-                className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-accent shrink-0"
+                className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border-2 border-[#e11d78]"
               >
                 <img src={avatar.avatar_url} alt={avatar.nickname} className="w-full h-full object-cover" />
                 <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
@@ -748,7 +758,7 @@ export default function ChatPage() {
             {allAvatars.length > selectedAvatars.length && (
               <button
                 onClick={() => setShowAvatarSelector(true)}
-                className="w-10 h-10 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 shrink-0 hover:border-accent hover:text-accent transition-colors"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-gray-300 text-gray-400 transition-colors hover:border-[#e11d78] hover:text-[#e11d78]"
               >
                 <Plus className="w-5 h-5" />
               </button>
@@ -757,7 +767,7 @@ export default function ChatPage() {
             {allAvatars.length > 0 && allAvatars.length === selectedAvatars.length && (
               <button
                 onClick={() => router.push("/profile")}
-                className="w-10 h-10 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 shrink-0 hover:border-accent hover:text-accent transition-colors"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-gray-300 text-gray-400 transition-colors hover:border-[#e11d78] hover:text-[#e11d78]"
               >
                 <Plus className="w-5 h-5" />
               </button>
@@ -788,11 +798,11 @@ export default function ChatPage() {
                     onClick={() => toggleAvatarSelection(avatar)}
                     className="relative"
                   >
-                    <div className={`aspect-square rounded-xl overflow-hidden border-2 ${isSelected ? "border-accent" : "border-gray-200"}`}>
+                    <div className={`aspect-square rounded-xl overflow-hidden border-2 ${isSelected ? "border-[#e11d78]" : "border-gray-200"}`}>
                       <img src={avatar.avatar_url} alt={avatar.nickname} className="w-full h-full object-cover" />
                     </div>
                     {isSelected && (
-                      <div className="absolute -top-1 -right-1 w-6 h-6 bg-accent rounded-full flex items-center justify-center">
+                      <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-[#e11d78]">
                         <Check className="w-3.5 h-3.5 text-white" />
                       </div>
                     )}
@@ -807,7 +817,7 @@ export default function ChatPage() {
                 setShowAvatarSelector(false);
                 router.push("/profile");
               }}
-              className="w-full mt-6 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-accent hover:text-accent transition-colors"
+              className="mt-6 w-full rounded-xl border-2 border-dashed border-gray-300 py-3 text-gray-500 transition-colors hover:border-[#e11d78] hover:text-[#e11d78]"
             >
               <div className="flex items-center justify-center gap-2">
                 <Plus className="w-5 h-5" />
@@ -852,7 +862,7 @@ export default function ChatPage() {
                         label: `把${topItemLabel(replacePicker.category)}换成“${getItemDisplayName(item)}”`,
                       });
                     }}
-                    className="flex w-full items-center gap-3 rounded-2xl border border-gray-200 p-3 text-left hover:border-accent/40 hover:bg-accent/5"
+                    className="flex w-full items-center gap-3 rounded-2xl border border-gray-200 p-3 text-left hover:border-[#f3b3d2] hover:bg-[#fff5fa]"
                   >
                     <div className="h-16 w-14 shrink-0 overflow-hidden rounded-xl bg-gray-100">
                       <img src={item.image_url} alt={getItemDisplayName(item)} className="h-full w-full object-cover" />
@@ -877,8 +887,8 @@ export default function ChatPage() {
         <div className="space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mx-auto mb-4">
-                <ImageIcon className="w-8 h-8 text-accent" />
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#ffe5f1]">
+                <ImageIcon className="h-8 w-8 text-[#e11d78]" />
               </div>
               <h2 className="text-xl font-semibold text-gray-900 mb-2">把需求发过来，我会保留最近几次穿搭记录</h2>
               <p className="text-gray-500 mb-6">输入 `/` 查看常用诉求，也可以直接锁定某件单品，再让我补齐整套。</p>
@@ -888,8 +898,8 @@ export default function ChatPage() {
                 <p className="mt-2 text-sm text-gray-600">1 张本人照 + 2-3 件常穿衣服就够了。上传后我会自动判断并入库。</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
-                    onClick={() => uploadInputRef.current?.click()}
-                    className="px-3 py-2 rounded-full bg-accent text-white text-sm"
+                    onClick={openChatUploadPicker}
+                    className="rounded-full bg-[#111827] px-3 py-2 text-sm text-white shadow-sm transition-colors hover:bg-[#1f2937]"
                   >
                     直接上传图片
                   </button>
@@ -919,7 +929,7 @@ export default function ChatPage() {
                 <div
                   className={`px-4 py-3 rounded-2xl text-base ${
                     message.role === "user"
-                      ? "bg-accent text-white rounded-br-md"
+                      ? "rounded-br-md bg-[#111827] text-white"
                       : "bg-white text-gray-800 rounded-bl-md shadow-sm"
                   }`}
                 >
@@ -940,7 +950,7 @@ export default function ChatPage() {
                   <div className="mt-3 bg-white rounded-2xl overflow-hidden shadow-sm">
                     <div className="px-4 py-3 border-b border-gray-100">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-2 py-1 bg-accent/10 text-accent text-xs font-medium rounded-full">
+                        <span className="rounded-full bg-[#ffe5f1] px-2 py-1 text-xs font-medium text-[#c0266b]">
                           {message.generationMethod || "搭配结果"}
                         </span>
                         {message.style ? <p className="font-medium text-gray-800">{message.style}</p> : null}
@@ -977,7 +987,7 @@ export default function ChatPage() {
                       <div className="flex gap-3 overflow-x-auto pb-2">
                         <div className="shrink-0">
                           <p className="text-xs text-gray-400 mb-1 text-center">你的照片</p>
-                          <div className="w-20 h-28 rounded-lg overflow-hidden bg-gray-100 border border-accent/30 shadow-sm">
+                          <div className="w-20 h-28 rounded-lg overflow-hidden border border-[#f3b3d2] bg-gray-100 shadow-sm">
                             <img
                               src={message.personUrl || selectedAvatars[0]?.avatar_url}
                               alt="你的照片"
@@ -1059,7 +1069,7 @@ export default function ChatPage() {
                                         })
                                       }
                                       disabled={isLoading}
-                                      className="rounded-full border border-accent/30 bg-accent/5 px-3 py-2 text-sm text-accent disabled:opacity-50"
+                                      className="rounded-full border border-[#f3b3d2] bg-[#fff5fa] px-3 py-2 text-sm text-[#c0266b] disabled:opacity-50"
                                     >
                                       指定替换
                                     </button>
@@ -1086,7 +1096,7 @@ export default function ChatPage() {
                                 disabled={feedbackLoadingId === message.id}
                                 className={`px-3 py-2 rounded-full text-sm transition-colors ${
                                   active
-                                    ? "bg-accent text-white"
+                                    ? "bg-[#111827] text-white"
                                     : "border border-gray-200 text-gray-700 bg-white"
                                 } ${feedbackLoadingId === message.id ? "opacity-60" : ""}`}
                               >
@@ -1185,11 +1195,11 @@ export default function ChatPage() {
           {lockedItem ? (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-gray-500">已指定主角单品</span>
-              <div className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/5 px-3 py-2 text-sm text-accent">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#f3b3d2] bg-[#fff5fa] px-3 py-2 text-sm text-[#c0266b]">
                 <span>{getItemDisplayName(lockedItem)}</span>
                 <button
                   onClick={() => setLockedItem(null)}
-                  className="rounded-full bg-white/80 p-0.5 text-accent"
+                  className="rounded-full bg-white/80 p-0.5 text-[#c0266b]"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -1199,7 +1209,7 @@ export default function ChatPage() {
 
           <div className="flex gap-2 items-center">
             <input
-              ref={uploadInputRef}
+              ref={uploadLibraryInputRef}
               type="file"
               accept="image/*"
               className="hidden"
@@ -1210,11 +1220,36 @@ export default function ChatPage() {
                 }
               }}
             />
+            <input
+              ref={uploadCameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  void handleChatUpload(file);
+                }
+              }}
+            />
+            <input
+              ref={uploadFileInputRef}
+              type="file"
+              accept="image/*,.heic,.heif"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  void handleChatUpload(file);
+                }
+              }}
+            />
 
             <button
-              onClick={() => uploadInputRef.current?.click()}
+              onClick={openChatUploadPicker}
               disabled={isLoading || isUploading}
-              className="w-12 h-12 rounded-full border border-gray-200 bg-white text-gray-600 flex items-center justify-center shrink-0 disabled:opacity-50"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 disabled:opacity-50"
             >
               <Upload className="w-5 h-5" />
             </button>
@@ -1222,7 +1257,8 @@ export default function ChatPage() {
             <input
               ref={textInputRef}
               type="text"
-              placeholder={lockedItem ? "继续说需求，我会围绕这件来搭" : "输入 / 看常用诉求，或直接描述今天想穿什么"}
+              placeholder={lockedItem ? "继续说需求，我会围绕这件来搭" : "输入 / 看常用诉求，或直接说今天想穿什么"}
+              aria-label="输入穿搭需求"
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}
               onKeyDown={(event) => {
@@ -1231,7 +1267,7 @@ export default function ChatPage() {
                 }
               }}
               disabled={isLoading || isUploading}
-              className="flex-1 px-4 py-3 bg-gray-100 rounded-full text-base text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50"
+              className="min-w-0 flex-1 rounded-full bg-gray-100 px-4 py-3 text-[17px] text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#f3b3d2] disabled:opacity-50"
             />
 
             <button
@@ -1244,13 +1280,23 @@ export default function ChatPage() {
                 isLoading ||
                 isUploading
               }
-              className="w-12 h-12 rounded-full bg-accent text-white flex items-center justify-center disabled:bg-gray-300 transition-colors shrink-0"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#111827] text-white shadow-sm transition-colors disabled:bg-gray-200 disabled:text-gray-500"
             >
               <Send className="w-5 h-5" />
             </button>
           </div>
         </div>
       </div>
+
+      <ImageSourceSheet
+        open={showUploadPicker}
+        title="上传图片"
+        description="可以上传衣服照片，也可以上传本人照，我会自动识别并入库。"
+        onClose={() => setShowUploadPicker(false)}
+        onChooseLibrary={() => uploadLibraryInputRef.current?.click()}
+        onChooseCamera={() => uploadCameraInputRef.current?.click()}
+        onChooseFile={() => uploadFileInputRef.current?.click()}
+      />
 
       <BottomNav />
     </div>

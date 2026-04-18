@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImageSourceSheet } from "@/components/image-source-sheet";
 import { CLOTHING_CATEGORIES, COLORS, STYLE_TAGS, SEASONS } from "@/storage/database/shared/schema";
 import { processImageFile } from "@/lib/image-utils";
 import { getCurrentUser } from "@/lib/auth-local";
@@ -29,14 +30,16 @@ function useMounted() {
 
 export default function AddClothPage() {
   const router = useRouter();
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMounted = useMounted();
   const [userId, setUserId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showUploadPicker, setShowUploadPicker] = useState(false);
   const [analyzedData, setAnalyzedData] = useState<{
     category?: string;
     color?: string;
@@ -78,10 +81,17 @@ export default function AddClothPage() {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
 
     console.log("选择的文件:", file.name, file.type, file.size);
     await processImage(file);
+  };
+
+  const openUploadPicker = () => {
+    if (!isAnalyzing && !isSaving) {
+      setShowUploadPicker(true);
+    }
   };
 
   const processImage = async (file: File) => {
@@ -286,7 +296,7 @@ export default function AddClothPage() {
             ) : (
               <div
                 className="flex flex-col items-center justify-center h-full gap-4 cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={openUploadPicker}
               >
                 <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
                   <Shirt className="w-8 h-8 text-gray-400" />
@@ -313,16 +323,30 @@ export default function AddClothPage() {
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={openUploadPicker}
             >
               <Upload className="w-4 h-4 mr-2" />
-              上传照片
+              选择上传方式
             </Button>
             <input
-              ref={fileInputRef}
+              ref={libraryInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <input
+              ref={cameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.heic,.heif"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -468,6 +492,16 @@ export default function AddClothPage() {
           )}
         </div>
       </div>
+
+      <ImageSourceSheet
+        open={showUploadPicker}
+        title="添加衣服照片"
+        description="你可以从照片图库选择、现场拍照，或从文件中导入衣服图片。"
+        onClose={() => setShowUploadPicker(false)}
+        onChooseLibrary={() => libraryInputRef.current?.click()}
+        onChooseCamera={() => cameraInputRef.current?.click()}
+        onChooseFile={() => fileInputRef.current?.click()}
+      />
     </div>
   );
 }

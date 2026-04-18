@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BottomNav } from "@/components/BottomNav";
+import { ImageSourceSheet } from "@/components/image-source-sheet";
 import { toast } from "sonner";
 import { Loader2, LogOut, Trash2, Shield, Plus, X, Image as ImageIcon } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +22,9 @@ interface Portrait {
 
 export default function ProfilePage() {
   const router = useRouter();
+  const portraitLibraryInputRef = useRef<HTMLInputElement>(null);
+  const portraitCameraInputRef = useRef<HTMLInputElement>(null);
+  const portraitFileInputRef = useRef<HTMLInputElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
   const [isClearing, setIsClearing] = useState(false);
@@ -28,6 +32,7 @@ export default function ProfilePage() {
   const [portraits, setPortraits] = useState<Portrait[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showPortraitPicker, setShowPortraitPicker] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -87,12 +92,8 @@ export default function ProfilePage() {
     }
   };
 
-  const handlePortraitUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handlePortraitUploadFile = async (file: File) => {
     if (!file || !user) return;
-
-    // 重置 input，允许重复上传同一文件
-    e.target.value = '';
 
     // 验证文件类型和大小
     if (!file.type.startsWith("image/")) {
@@ -167,6 +168,20 @@ export default function ProfilePage() {
       console.error("人像上传失败:", error);
       toast.error("人像上传失败，请重试");
       setIsUploading(false);
+    }
+  };
+
+  const handlePortraitUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) {
+      void handlePortraitUploadFile(file);
+    }
+  };
+
+  const openPortraitPicker = () => {
+    if (!isUploading) {
+      setShowPortraitPicker(true);
     }
   };
 
@@ -246,8 +261,9 @@ export default function ProfilePage() {
           <CardContent className="space-y-4">
             {/* 添加入口 */}
             <div>
-              <label
-                htmlFor="portrait-upload"
+              <button
+                type="button"
+                onClick={openPortraitPicker}
                 className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors"
               >
                 {isUploading ? (
@@ -263,15 +279,7 @@ export default function ProfilePage() {
                     <span className="text-sm text-gray-600">点击添加上传人像</span>
                   </div>
                 )}
-                <input
-                  id="portrait-upload"
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePortraitUpload}
-                  className="hidden"
-                  disabled={isUploading}
-                />
-              </label>
+              </button>
             </div>
 
             {/* 人像列表 */}
@@ -412,6 +420,40 @@ export default function ProfilePage() {
           退出登录
         </Button>
       </div>
+      <input
+        ref={portraitLibraryInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handlePortraitUpload}
+        className="hidden"
+        disabled={isUploading}
+      />
+      <input
+        ref={portraitCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="user"
+        onChange={handlePortraitUpload}
+        className="hidden"
+        disabled={isUploading}
+      />
+      <input
+        ref={portraitFileInputRef}
+        type="file"
+        accept="image/*,.heic,.heif"
+        onChange={handlePortraitUpload}
+        className="hidden"
+        disabled={isUploading}
+      />
+      <ImageSourceSheet
+        open={showPortraitPicker}
+        title="添加人像照片"
+        description="你可以从手机图库选择、直接拍照，或从文件中导入。"
+        onClose={() => setShowPortraitPicker(false)}
+        onChooseLibrary={() => portraitLibraryInputRef.current?.click()}
+        onChooseCamera={() => portraitCameraInputRef.current?.click()}
+        onChooseFile={() => portraitFileInputRef.current?.click()}
+      />
       <BottomNav />
     </div>
   );
