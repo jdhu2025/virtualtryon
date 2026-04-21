@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useLocale } from "@/contexts/locale-context";
 import { t } from "@/lib/locale";
+import { cn } from "@/lib/utils";
 
 declare global {
   interface Window {
@@ -78,11 +79,18 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const retryCountRef = useRef(0);
+  const interactiveTimeoutCountRef = useRef(0);
   const pendingRef = useRef<{
     resolve: (token: string) => void;
     reject: (error: Error) => void;
   } | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [isInteractive, setIsInteractive] = useState(false);
+
+  const clearInteractiveState = useCallback(() => {
+    interactiveTimeoutCountRef.current = 0;
+    setIsInteractive(false);
+  }, []);
 
   const rejectPending = useCallback((message: string) => {
     if (pendingRef.current) {
@@ -105,10 +113,21 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
       sitekey: siteKey,
       execution: "execute",
       appearance: "interaction-only",
+      size: "flexible",
       theme: "auto",
       language: locale === "zh" ? "zh-cn" : "en",
+      retry: "auto",
+      "refresh-timeout": "auto",
+      "before-interactive-callback": () => {
+        interactiveTimeoutCountRef.current = 0;
+        setIsInteractive(true);
+      },
+      "after-interactive-callback": () => {
+        setIsInteractive(false);
+      },
       callback: (token: string) => {
         retryCountRef.current = 0;
+        clearInteractiveState();
         if (pendingRef.current) {
           pendingRef.current.resolve(token);
           pendingRef.current = null;
@@ -129,11 +148,13 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
           }
         }
 
+        clearInteractiveState();
         rejectPending(getClientErrorMessage(locale, errorCode));
         return true;
       },
       "expired-callback": () => {
         retryCountRef.current = 0;
+        clearInteractiveState();
         rejectPending(
           t(
             locale,
@@ -144,18 +165,32 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
       },
       "timeout-callback": () => {
         retryCountRef.current = 0;
+        interactiveTimeoutCountRef.current += 1;
+        setIsInteractive(true);
+
+        if (
+          widgetIdRef.current &&
+          window.turnstile &&
+          interactiveTimeoutCountRef.current < 2
+        ) {
+          window.turnstile.reset(widgetIdRef.current);
+          window.turnstile.execute(widgetIdRef.current);
+          return;
+        }
+
+        clearInteractiveState();
         rejectPending(
           t(
             locale,
-            "Human verification timed out. Please try again.",
-            "人机验证超时，请重试。"
+            "The security check timed out. Complete the checkbox as soon as it appears, then try again.",
+            "安全校验已超时。请在复选框出现后尽快完成验证，然后再重试。"
           )
         );
       },
     });
 
     setIsReady(true);
-  }, [locale, rejectPending, siteKey]);
+  }, [clearInteractiveState, locale, rejectPending, siteKey]);
 
   useEffect(() => {
     if (window.turnstile && siteKey) {
@@ -167,8 +202,9 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
         window.turnstile.remove(widgetIdRef.current);
         widgetIdRef.current = null;
       }
+      clearInteractiveState();
     };
-  }, [renderWidget, siteKey]);
+  }, [clearInteractiveState, renderWidget, siteKey]);
 
   const getToken = useCallback(() => {
     return new Promise<string>((resolve, reject) => {
@@ -212,6 +248,8 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
       }
 
       retryCountRef.current = 0;
+      interactiveTimeoutCountRef.current = 0;
+      setIsInteractive(false);
       pendingRef.current = { resolve, reject };
       window.turnstile.reset(widgetIdRef.current);
       window.turnstile.execute(widgetIdRef.current);
@@ -233,10 +271,35 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
           renderWidget();
         }}
       />
+      {isInteractive ? (
+        <>
+          <div
+            className="fixed inset-0 z-[98] bg-black/45 backdrop-blur-[2px]"
+            aria-hidden="true"
+          />
+          <div className="fixed left-1/2 top-[calc(50%-112px)] z-[101] w-[min(92vw,420px)] -translate-x-1/2 rounded-[24px] bg-white/92 px-4 py-3 text-center shadow-[0_24px_80px_rgba(15,23,42,0.28)] backdrop-blur">
+            <p className="text-sm font-semibold text-[#20183a]">
+              {t(locale, "Complete the security check to continue", "请先完成人机验证，再继续生成")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-[#62586f]">
+              {t(
+                locale,
+                "If a checkbox appears, tap it right away. This step is only shown when Cloudflare needs extra confirmation.",
+                "如果出现复选框，请尽快点一下。只有 Cloudflare 需要额外确认时，才会显示这一步。"
+              )}
+            </p>
+          </div>
+        </>
+      ) : null}
       <div
         ref={containerRef}
-        className="fixed bottom-4 left-1/2 z-[100] -translate-x-1/2"
-        aria-hidden="true"
+        className={cn(
+          "fixed left-1/2 z-[100] w-[min(92vw,420px)] -translate-x-1/2 transition-all duration-200",
+          isInteractive
+            ? "top-1/2 -translate-y-1/2 opacity-100"
+            : "bottom-4 opacity-0 pointer-events-none"
+        )}
+        aria-hidden={!isInteractive}
       />
       {children}
     </TurnstileContext.Provider>
