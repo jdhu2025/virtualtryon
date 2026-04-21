@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useDeferredValue } from "react";
 import Link from "next/link";
-import { Camera, Search, Shirt, MoreVertical, Trash2, Edit2 } from "lucide-react";
+import { Camera, Search, Shirt, MoreVertical, Trash2, Edit2, X } from "lucide-react";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { RemoteImage } from "@/components/remote-image";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetHeader,
   SheetTitle,
@@ -552,75 +553,100 @@ export default function WardrobePage() {
       </div>
 
       {/* Item Detail Sheet */}
-      <Sheet open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
-        <SheetContent side="bottom" className="glass-panel-strong rounded-t-[32px] border-0">
-          <SheetHeader>
-            <SheetTitle>{t(locale, "Item details", "衣服详情")}</SheetTitle>
+      <Sheet
+        open={!!selectedItem}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedItem(null);
+          }
+        }}
+      >
+        <SheetContent
+          side="bottom"
+          showClose={false}
+          className="glass-panel-strong max-h-[92dvh] gap-0 overflow-hidden rounded-t-[32px] border-0 p-0"
+        >
+          <div className="mx-auto mt-3 h-1.5 w-12 shrink-0 rounded-full bg-black/10" />
+          <SheetHeader className="sticky top-0 z-10 shrink-0 border-b border-white/50 bg-white/88 px-4 py-4 backdrop-blur">
+            <div className="flex items-center justify-between gap-3">
+              <SheetTitle>{t(locale, "Item details", "衣服详情")}</SheetTitle>
+              <SheetClose asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/80 text-[#3a2f51] shadow-sm transition hover:bg-white"
+                  aria-label={t(locale, "Back to wardrobe", "返回衣柜")}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </SheetClose>
+            </div>
           </SheetHeader>
           {selectedItem && (
-            <div className="mt-4 space-y-4">
-              <div className="relative aspect-[4/5] overflow-hidden rounded-[24px] bg-white/80">
-                <RemoteImage
-                  src={selectedItem.image_url}
-                  alt={selectedItem.ai_description || "衣服"}
-                  fill
-                  sizes="100vw"
-                  className="object-contain"
-                />
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-sm text-gray-500">{t(locale, "Category", "类别")}</div>
-                  <div className="font-medium">
-                    {getCategoryLabel(selectedItem.category)}
-                  </div>
+            <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-4">
+              <div className="space-y-4">
+                <div className="relative h-[min(52dvh,28rem)] overflow-hidden rounded-[24px] bg-white/80 sm:h-[min(60dvh,32rem)]">
+                  <RemoteImage
+                    src={selectedItem.image_url}
+                    alt={selectedItem.ai_description || "衣服"}
+                    fill
+                    sizes="100vw"
+                    className="object-contain"
+                  />
                 </div>
-                {selectedItem.color && (
+                <div className="space-y-3">
                   <div>
-                    <div className="text-sm text-gray-500">{t(locale, "Color", "颜色")}</div>
-                    <div className="flex items-center gap-2">
-                      {getColorDot(selectedItem.color)}
-                      <span className="font-medium">
-                        {getColorLabel(selectedItem.color)}
-                      </span>
+                    <div className="text-sm text-gray-500">{t(locale, "Category", "类别")}</div>
+                    <div className="font-medium">
+                      {getCategoryLabel(selectedItem.category)}
                     </div>
                   </div>
-                )}
-                {selectedItem.style_tags && selectedItem.style_tags.length > 0 && (
-                  <div>
-                    <div className="text-sm text-gray-500">{t(locale, "Style tags", "风格标签")}</div>
-                    <div className="flex gap-2 flex-wrap">
-                      {selectedItem.style_tags.map((tag) => (
-                        <Badge
-                          key={tag}
-                          variant="outline"
-                          className="border-white/80 bg-white/72 px-3 py-1 text-[#5f526a]"
-                        >
-                          {getStyleLabel(tag)}
-                        </Badge>
-                      ))}
+                  {selectedItem.color && (
+                    <div>
+                      <div className="text-sm text-gray-500">{t(locale, "Color", "颜色")}</div>
+                      <div className="flex items-center gap-2">
+                        {getColorDot(selectedItem.color)}
+                        <span className="font-medium">
+                          {getColorLabel(selectedItem.color)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
-                {(selectedItem.ai_description || selectedItem.user_description) && (
-                  <div>
-                    <div className="text-sm text-gray-500">{t(locale, "Description", "描述")}</div>
-                    <div className="text-gray-900">
-                      {selectedItem.user_description ||
-                        selectedItem.ai_description}
+                  )}
+                  {selectedItem.style_tags && selectedItem.style_tags.length > 0 && (
+                    <div>
+                      <div className="text-sm text-gray-500">{t(locale, "Style tags", "风格标签")}</div>
+                      <div className="flex gap-2 flex-wrap">
+                        {selectedItem.style_tags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="border-white/80 bg-white/72 px-3 py-1 text-[#5f526a]"
+                          >
+                            {getStyleLabel(tag)}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-              <div className="pt-4 border-t">
-                <Button
-                  variant="destructive"
-                  className="w-full rounded-full"
-                  onClick={() => deleteItem(selectedItem)}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  {t(locale, "Delete this item", "删除这件衣服")}
-                </Button>
+                  )}
+                  {(selectedItem.ai_description || selectedItem.user_description) && (
+                    <div>
+                      <div className="text-sm text-gray-500">{t(locale, "Description", "描述")}</div>
+                      <div className="text-gray-900">
+                        {selectedItem.user_description ||
+                          selectedItem.ai_description}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="border-t pt-4">
+                  <Button
+                    variant="destructive"
+                    className="w-full rounded-full"
+                    onClick={() => deleteItem(selectedItem)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {t(locale, "Delete this item", "删除这件衣服")}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
