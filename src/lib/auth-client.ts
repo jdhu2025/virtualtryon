@@ -7,6 +7,8 @@ import {
   clearUserData,
   setCurrentUser,
 } from "@/lib/auth-local";
+import { type Locale, t } from "@/lib/locale";
+import { TURNSTILE_TOKEN_HEADER } from "@/lib/turnstile-shared";
 
 interface UserWithoutPassword {
   id: string;
@@ -27,23 +29,44 @@ interface AuthResult {
 export async function clientRegister(
   username: string,
   password: string,
-  agreePrivacy: boolean
+  agreePrivacy: boolean,
+  options?: {
+    locale?: Locale;
+    turnstileToken?: string;
+  }
 ): Promise<AuthResult> {
+  const locale = options?.locale ?? "en";
+
   if (!agreePrivacy) {
-    return { success: false, error: "请阅读并同意隐私政策" };
+    return {
+      success: false,
+      error: t(
+        locale,
+        "Please review and accept the privacy policy.",
+        "请阅读并同意隐私政策"
+      ),
+    };
   }
 
   try {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (options?.turnstileToken) {
+      headers.set(TURNSTILE_TOKEN_HEADER, options.turnstileToken);
+    }
+
     const response = await fetch("/api/auth/register", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ username, password, agreePrivacy }),
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      return { success: false, error: data.error || "注册失败" };
+      return {
+        success: false,
+        error: data.error || t(locale, "Registration failed.", "注册失败"),
+      };
     }
 
     if (data.user) {
@@ -57,7 +80,11 @@ export async function clientRegister(
     console.error("注册请求失败:", error);
     return {
       success: false,
-      error: "无法连接服务，请确认本地开发服务已启动；如果刚修改过 .env.local，请重启 pnpm dev",
+      error: t(
+        locale,
+        "Unable to reach the service. Make sure the dev server is running, and restart pnpm dev if you just changed .env.local.",
+        "无法连接服务，请确认本地开发服务已启动；如果刚修改过 .env.local，请重启 pnpm dev"
+      ),
     };
   }
 }
@@ -67,7 +94,8 @@ export async function clientRegister(
  */
 export async function clientLogin(
   username: string,
-  password: string
+  password: string,
+  locale: Locale = "en"
 ): Promise<AuthResult> {
   try {
     const response = await fetch("/api/auth/login", {
@@ -79,7 +107,10 @@ export async function clientLogin(
     const data = await response.json();
 
     if (!response.ok) {
-      return { success: false, error: data.error || "登录失败" };
+      return {
+        success: false,
+        error: data.error || t(locale, "Login failed.", "登录失败"),
+      };
     }
 
     if (data.user) {
@@ -93,7 +124,11 @@ export async function clientLogin(
     console.error("登录请求失败:", error);
     return {
       success: false,
-      error: "无法连接服务，请确认本地开发服务已启动；如果刚修改过 .env.local，请重启 pnpm dev",
+      error: t(
+        locale,
+        "Unable to reach the service. Make sure the dev server is running, and restart pnpm dev if you just changed .env.local.",
+        "无法连接服务，请确认本地开发服务已启动；如果刚修改过 .env.local，请重启 pnpm dev"
+      ),
     };
   }
 }
@@ -167,8 +202,8 @@ export function useAuth() {
   }, []);
 
   // 登录
-  const login = useCallback(async (username: string, password: string) => {
-    const result = await clientLogin(username, password);
+  const login = useCallback(async (username: string, password: string, locale: Locale = "en") => {
+    const result = await clientLogin(username, password, locale);
     if (result.success && result.user) {
       setUser(result.user);
     }
@@ -179,9 +214,13 @@ export function useAuth() {
   const register = useCallback(async (
     username: string,
     password: string,
-    agreePrivacy: boolean
+    agreePrivacy: boolean,
+    options?: {
+      locale?: Locale;
+      turnstileToken?: string;
+    }
   ) => {
-    const result = await clientRegister(username, password, agreePrivacy);
+    const result = await clientRegister(username, password, agreePrivacy, options);
     if (result.success && result.user) {
       setUser(result.user);
     }

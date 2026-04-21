@@ -102,8 +102,11 @@ export function loginUser(username: string, password: string): { success: boolea
   }
   
   // 保存当前用户
-  const userWithoutPassword = { ...user };
-  delete (userWithoutPassword as any).passwordHash;
+  const userWithoutPassword: Omit<StoredUser, 'passwordHash'> = {
+    id: user.id,
+    username: user.username,
+    createdAt: user.createdAt,
+  };
   setCurrentUser(userWithoutPassword);
   
   return { success: true, user: userWithoutPassword };

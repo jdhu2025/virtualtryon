@@ -7,6 +7,8 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_MAX_AGE,
 } from "@/lib/server-session";
+import { t } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
 
 /**
  * 用户登录 API
@@ -26,13 +28,20 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
+    const locale = getLocaleFromRequest(request);
     const body = await request.json();
     const { username, password } = body;
 
     // 验证必填字段
     if (!username || !password) {
       return NextResponse.json(
-        { error: "用户名和密码不能为空" },
+        {
+          error: t(
+            locale,
+            "Username and password are required.",
+            "用户名和密码不能为空"
+          ),
+        },
         { status: 400 }
       );
     }
@@ -52,7 +61,13 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json(
-        { error: "用户名或密码错误" },
+        {
+          error: t(
+            locale,
+            "Incorrect username or password.",
+            "用户名或密码错误"
+          ),
+        },
         { status: 401 }
       );
     }
@@ -61,7 +76,13 @@ export async function POST(request: NextRequest) {
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return NextResponse.json(
-        { error: "用户名或密码错误" },
+        {
+          error: t(
+            locale,
+            "Incorrect username or password.",
+            "用户名或密码错误"
+          ),
+        },
         { status: 401 }
       );
     }
@@ -92,8 +113,14 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("登录错误:", error);
+    const locale = getLocaleFromRequest(request);
     return NextResponse.json(
-      { error: formatSupabaseErrorMessage(error, "登录失败，请稍后重试") },
+      {
+        error: formatSupabaseErrorMessage(
+          error,
+          t(locale, "Login failed. Please try again later.", "登录失败，请稍后重试")
+        ),
+      },
       { status: 500 }
     );
   }

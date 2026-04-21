@@ -81,10 +81,11 @@ export async function POST(request: NextRequest) {
       message: "用户数据已清除",
       userId: userId,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "清除数据失败";
     console.error("清除数据错误:", error);
     return NextResponse.json(
-      { error: error.message || "清除数据失败" },
+      { error: errorMessage },
       { status: 500 }
     );
   }

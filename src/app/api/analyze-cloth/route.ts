@@ -1,62 +1,94 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { parseJsonBlock } from "@/lib/ai/json";
+import { invokeTextVision, type AiMessage } from "@/lib/ai/text-vision";
+import { t } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
+import { requireTurnstile } from "@/lib/turnstile";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// 增强版服装分析系统提示词
-const ANALYZE_SYSTEM_PROMPT = `你是一个专业的服装形象顾问。请详细分析用户上传的服装图片，并返回全面的信息。
+function parseDelimitedValues(value: string | string[] | undefined, limit: number): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).slice(0, limit);
+  }
+
+  return value
+    .split(/[,，、]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function getAnalyzeSystemPrompt(locale: ReturnType<typeof getLocaleFromRequest>) {
+  if (locale === "zh") {
+    return `你是一个专业的服装形象顾问。请详细分析用户上传的服装图片，并返回全面的信息。
 
 请返回以下 JSON 格式（所有字段都必须填写）：
 
 {
   "category": "服装类别，从以下选项选择：tops(上装), bottoms(下装), dresses(裙装), outerwear(外套), shoes(鞋子), bags(包包), accessories(配饰), hats(帽子)",
-  
   "color": "主色调：red, blue, black, white, gray, beige, green, pink, purple, yellow, orange, brown, navy, khaki",
-  
   "style_tags": "风格标签，逗号分隔，从中选择0-4个：casual(休闲), formal(正式), sporty(运动), elegant(优雅), vintage(复古), street(街头), bohemian(波西米亚), minimalist(简约), chic(时尚), feminine(女性化), edgy(酷感)",
-  
   "seasons": "适合季节，逗号分隔：spring(春), summer(夏), fall(秋), winter(冬)",
-  
   "scenes": "最适合的场景，逗号分隔，从中选择1-3个：meeting(正式会议), date(约会), party(派对聚会), office(日常办公), outdoor(户外运动), travel(旅行), casual(日常休闲), evening(晚宴活动)",
-  
   "pairing_suggestions": "搭配建议，逗号分隔，如：可搭配深色下装、适合配白色鞋子、可加围巾点缀等",
-  
   "body_type": "适合的体型，逗号分隔：slim(偏瘦), average(标准), curvy(曲线), tall(高挑), petite(小巧)",
-  
   "description": "50字以内的中文描述，突出这件衣服的亮点"
 }
 
 请只返回 JSON，不要添加任何解释。`;
+  }
+
+  return `You are a professional fashion analyst. Review the uploaded clothing photo and return structured metadata.
+
+Return JSON only with every field filled:
+
+{
+  "category": "One of: tops, bottoms, dresses, outerwear, shoes, bags, accessories, hats",
+  "color": "One of: red, blue, black, white, gray, beige, green, pink, purple, yellow, orange, brown, navy, khaki",
+  "style_tags": "Comma-separated list with 0-4 values from: casual, formal, sporty, elegant, vintage, street, bohemian, minimalist, chic, feminine, edgy",
+  "seasons": "Comma-separated list from: spring, summer, fall, winter",
+  "scenes": "Comma-separated list with 1-3 values from: meeting, date, party, office, outdoor, travel, casual, evening",
+  "pairing_suggestions": "Comma-separated pairing tips such as pair with dark bottoms or works with white shoes",
+  "body_type": "Comma-separated list from: slim, average, curvy, tall, petite",
+  "description": "An English description under 20 words highlighting the key strengths of the item"
+}
+
+Return JSON only.`;
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const locale = getLocaleFromRequest(request);
+    const turnstileResponse = await requireTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
+    }
+
     const { image } = await request.json();
 
     if (!image) {
       return NextResponse.json(
-        { error: "请提供图片" },
+        { error: t(locale, "Please provide an image.", "请提供图片") },
         { status: 400 }
       );
     }
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const config = new Config();
-    const client = new LLMClient(config, customHeaders);
-
-    const messages = [
+    const messages: AiMessage[] = [
       {
-        role: "user" as const,
+        role: "user",
         content: [
           {
-            type: "text" as const,
-            text: ANALYZE_SYSTEM_PROMPT,
+            type: "text",
+            text: getAnalyzeSystemPrompt(locale),
           },
           {
-            type: "image_url" as const,
+            type: "image_url",
             image_url: {
               url: image,
-              detail: "high" as const,
+              detail: "high",
             },
           },
         ],
@@ -64,8 +96,10 @@ export async function POST(request: NextRequest) {
     ];
 
     // 调用视觉模型进行分析
-    const response = await client.invoke(messages, {
-      model: "doubao-seed-1-6-vision-250815",
+    const response = await invokeTextVision({
+      requestHeaders: request.headers,
+      messages,
+      capability: "vision",
       temperature: 0.3,
     });
 
@@ -74,30 +108,21 @@ export async function POST(request: NextRequest) {
     try {
       const content = response.content.trim();
       console.log("原始 AI 响应:", content);
-      
-      // 移除可能的 markdown 代码块
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || content.match(/(\{[\s\S]*\})/);
-      const jsonStr = jsonMatch ? jsonMatch[1] : content;
-      
-      const parsed = JSON.parse(jsonStr);
-      
-      // 解析逗号分隔的字段
-      const parseArray = (value: string | string[] | undefined): string[] => {
-        if (!value) return [];
-        if (Array.isArray(value)) return value.slice(0, 4);
-        return value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4);
-      };
+
+      const parsed = parseJsonBlock<Record<string, string | string[] | undefined>>(content);
       
       // 确保返回正确的数据格式
       result = {
-        category: normalizeCategory(parsed.category),
-        color: normalizeColor(parsed.color),
-        style_tags: parseArray(parsed.style_tags),
-        seasons: parseArray(parsed.seasons),
-        scenes: parseArray(parsed.scenes),
-        pairing_suggestions: parseArray(parsed.pairing_suggestions),
-        body_type: parseArray(parsed.body_type),
-        description: String(parsed.description || "已识别衣服特征").substring(0, 100),
+        category: normalizeCategory(typeof parsed.category === "string" ? parsed.category : undefined),
+        color: normalizeColor(typeof parsed.color === "string" ? parsed.color : undefined),
+        style_tags: parseDelimitedValues(parsed.style_tags, 4),
+        seasons: parseDelimitedValues(parsed.seasons, 4),
+        scenes: parseDelimitedValues(parsed.scenes, 4),
+        pairing_suggestions: parseDelimitedValues(parsed.pairing_suggestions, 4),
+        body_type: parseDelimitedValues(parsed.body_type, 4),
+        description: String(
+          parsed.description || t(locale, "Recognized clothing item", "已识别衣服特征")
+        ).substring(0, 100),
       };
       
       console.log("解析后的结果:", result);
@@ -112,15 +137,21 @@ export async function POST(request: NextRequest) {
         scenes: ["casual"],
         pairing_suggestions: ["百搭款式"],
         body_type: ["average"],
-        description: "已识别衣服特征",
+        description: t(locale, "Recognized clothing item", "已识别衣服特征"),
       };
     }
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("服装分析失败:", error);
+    const locale = getLocaleFromRequest(request);
     return NextResponse.json(
-      { error: error.message || "分析失败" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : t(locale, "Analysis failed.", "分析失败"),
+      },
       { status: 500 }
     );
   }

@@ -1,7 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { parseJsonBlock } from "@/lib/ai/json";
+import { invokeTextVision, type AiMessage } from "@/lib/ai/text-vision";
+import { t } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
+import { requireTurnstile } from "@/lib/turnstile";
 
-const INTAKE_PROMPT = `你是一个图片分拣助手。请判断用户上传的是：
+function parseDelimitedValues(value: unknown, limit: number): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).slice(0, limit);
+  }
+
+  return String(value)
+    .split(/[,，、]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function getIntakePrompt(locale: ReturnType<typeof getLocaleFromRequest>) {
+  if (locale === "zh") {
+    return `你是一个图片分拣助手。请判断用户上传的是：
 1. portrait: 适合作为试衣人像的本人照片，能看到人或上半身/全身
 2. clothing: 单件衣服、裤子、裙子、鞋子、包等单品照片
 
@@ -20,6 +39,28 @@ const INTAKE_PROMPT = `你是一个图片分拣助手。请判断用户上传的
 - portrait 不要输出 category
 - clothing 必须输出 category 和 color
 - 只返回 JSON，不要解释`;
+  }
+
+  return `You are an image intake assistant. Decide whether the uploaded image is:
+1. portrait: a usable personal photo for virtual try-on
+2. clothing: a single fashion item such as tops, pants, dresses, shoes, or bags
+
+Return strict JSON:
+{
+  "kind": "portrait or clothing",
+  "confidence": 0.0,
+  "nickname": "If portrait, return a short English name like Portrait 1",
+  "category": "If clothing, return one of tops/bottoms/dresses/outerwear/shoes/bags/accessories/hats",
+  "color": "If clothing, return one of red/blue/black/white/gray/beige/green/pink/purple/yellow/orange/brown/navy/khaki",
+  "style_tags": ["If clothing, optionally return 0-3 tags from casual/formal/sporty/elegant/vintage/street/bohemian/minimalist/chic/feminine/edgy"],
+  "description": "Short English description under 10 words"
+}
+
+Rules:
+- portrait must not include category
+- clothing must include category and color
+- return JSON only`;
+}
 
 function normalizeCategory(category: string | undefined): string {
   const valid = ["tops", "bottoms", "dresses", "outerwear", "shoes", "bags", "accessories", "hats"];
@@ -61,39 +102,46 @@ function normalizeColor(color: string | undefined): string {
 
 export async function POST(request: NextRequest) {
   try {
+    const locale = getLocaleFromRequest(request);
+    const turnstileResponse = await requireTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
+    }
+
     const { image } = await request.json();
 
     if (!image) {
-      return NextResponse.json({ error: "缺少图片数据" }, { status: 400 });
+      return NextResponse.json(
+        { error: t(locale, "Missing image data.", "缺少图片数据") },
+        { status: 400 }
+      );
     }
 
-    const client = new LLMClient(new Config(), HeaderUtils.extractForwardHeaders(request.headers));
-    const response = await client.invoke(
-      [
-        {
-          role: "user" as const,
-          content: [
-            { type: "text" as const, text: INTAKE_PROMPT },
-            {
-              type: "image_url" as const,
-              image_url: {
-                url: image,
-                detail: "high" as const,
-              },
-            },
-          ],
-        },
-      ],
+    const messages: AiMessage[] = [
       {
-        model: "doubao-seed-1-6-vision-250815",
-        temperature: 0.2,
-      }
-    );
+        role: "user",
+        content: [
+          { type: "text", text: getIntakePrompt(locale) },
+          {
+            type: "image_url",
+            image_url: {
+              url: image,
+              detail: "high",
+            },
+          },
+        ],
+      },
+    ];
+
+    const response = await invokeTextVision({
+      requestHeaders: request.headers,
+      messages,
+      capability: "vision",
+      temperature: 0.2,
+    });
 
     const content = response.content.trim();
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || content.match(/(\{[\s\S]*\})/);
-    const jsonStr = jsonMatch ? jsonMatch[1] : content;
-    const parsed = JSON.parse(jsonStr);
+    const parsed = parseJsonBlock<Record<string, unknown>>(content);
 
     const kind = String(parsed.kind || "").toLowerCase() === "portrait" ? "portrait" : "clothing";
 
@@ -102,17 +150,34 @@ export async function POST(request: NextRequest) {
       result: {
         kind,
         confidence: Number(parsed.confidence || 0.8),
-        nickname: String(parsed.nickname || "人像"),
-        category: kind === "clothing" ? normalizeCategory(parsed.category) : null,
-        color: kind === "clothing" ? normalizeColor(parsed.color) : null,
-        style_tags: Array.isArray(parsed.style_tags) ? parsed.style_tags.slice(0, 3).map(String) : [],
-        description: String(parsed.description || (kind === "portrait" ? "已识别为试衣人像" : "已识别为衣橱单品")).slice(0, 40),
+        nickname: String(parsed.nickname || t(locale, "Portrait", "人像")),
+        category:
+          kind === "clothing"
+            ? normalizeCategory(typeof parsed.category === "string" ? parsed.category : undefined)
+            : null,
+        color:
+          kind === "clothing"
+            ? normalizeColor(typeof parsed.color === "string" ? parsed.color : undefined)
+            : null,
+        style_tags: parseDelimitedValues(parsed.style_tags, 3),
+        description: String(
+          parsed.description ||
+            (kind === "portrait"
+              ? t(locale, "Recognized as a portrait", "已识别为试衣人像")
+              : t(locale, "Recognized as a wardrobe item", "已识别为衣橱单品"))
+        ).slice(0, 40),
       },
     });
   } catch (error) {
     console.error("聊天上传识别失败:", error);
+    const locale = getLocaleFromRequest(request);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "识别失败" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : t(locale, "Recognition failed.", "识别失败"),
+      },
       { status: 500 }
     );
   }

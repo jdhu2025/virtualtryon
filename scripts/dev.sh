@@ -12,6 +12,32 @@ port_is_listening() {
   lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
 }
 
+cleanup_next_dev_lock() {
+  local lock_file=".next/dev/lock"
+  local pids
+
+  if [[ ! -e "${lock_file}" ]]; then
+    return 0
+  fi
+
+  pids=$(lsof -t "${lock_file}" 2>/dev/null | sort -u | tr '\n' ' ' | xargs echo 2>/dev/null || true)
+  if [[ -n "${pids// /}" ]]; then
+    echo "Found existing Next dev lock at ${lock_file}, held by PIDs: ${pids} (SIGKILL)"
+    # shellcheck disable=SC2086
+    kill -9 ${pids} 2>/dev/null || true
+    sleep 1
+    pids=$(lsof -t "${lock_file}" 2>/dev/null | sort -u | tr '\n' ' ' | xargs echo 2>/dev/null || true)
+    if [[ -n "${pids// /}" ]]; then
+      echo "Warning: Next dev lock still held after SIGKILL, PIDs: ${pids}"
+    fi
+  fi
+
+  if [[ -e "${lock_file}" ]]; then
+    echo "Removing stale Next dev lock at ${lock_file}."
+    rm -f "${lock_file}"
+  fi
+}
+
 pick_dev_port() {
   local want="$1"
   local -a try=("${want}")
@@ -52,6 +78,8 @@ kill_port_if_listening() {
     echo "Port ${port} cleared."
   fi
 }
+
+cleanup_next_dev_lock
 
 PORT="$(pick_dev_port "${DESIRED_PORT}")"
 export PORT

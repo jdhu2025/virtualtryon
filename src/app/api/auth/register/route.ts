@@ -7,6 +7,9 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_MAX_AGE,
 } from "@/lib/server-session";
+import { t } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
+import { requireTurnstile } from "@/lib/turnstile";
 
 /**
  * 用户注册 API（localStorage 版本）
@@ -26,13 +29,25 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
+    const locale = getLocaleFromRequest(request);
+    const turnstileResponse = await requireTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
+    }
+
     const body = await request.json();
     const { username, password, agreePrivacy } = body;
 
     // 验证必填字段
     if (!username || !password) {
       return NextResponse.json(
-        { error: "用户名和密码不能为空" },
+        {
+          error: t(
+            locale,
+            "Username and password are required.",
+            "用户名和密码不能为空"
+          ),
+        },
         { status: 400 }
       );
     }
@@ -40,21 +55,39 @@ export async function POST(request: NextRequest) {
     // 验证隐私政策
     if (!agreePrivacy) {
       return NextResponse.json(
-        { error: "请阅读并同意隐私政策" },
+        {
+          error: t(
+            locale,
+            "Please review and accept the privacy policy.",
+            "请阅读并同意隐私政策"
+          ),
+        },
         { status: 400 }
       );
     }
 
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
       return NextResponse.json(
-        { error: "用户名需为3-20位字母、数字或下划线" },
+        {
+          error: t(
+            locale,
+            "Username must be 3-20 characters and use only letters, numbers, or underscores.",
+            "用户名需为3-20位字母、数字或下划线"
+          ),
+        },
         { status: 400 }
       );
     }
 
     if (password.length < 6 || password.length > 20) {
       return NextResponse.json(
-        { error: "密码需为6-20位" },
+        {
+          error: t(
+            locale,
+            "Password must be 6-20 characters long.",
+            "密码需为6-20位"
+          ),
+        },
         { status: 400 }
       );
     }
@@ -73,7 +106,9 @@ export async function POST(request: NextRequest) {
 
     if (existingUser) {
       return NextResponse.json(
-        { error: "用户名已存在" },
+        {
+          error: t(locale, "That username is already taken.", "用户名已存在"),
+        },
         { status: 400 }
       );
     }
@@ -123,8 +158,14 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("注册错误:", error);
+    const locale = getLocaleFromRequest(request);
     return NextResponse.json(
-      { error: formatSupabaseErrorMessage(error, "注册失败，请稍后重试") },
+      {
+        error: formatSupabaseErrorMessage(
+          error,
+          t(locale, "Registration failed. Please try again later.", "注册失败，请稍后重试")
+        ),
+      },
       { status: 500 }
     );
   }

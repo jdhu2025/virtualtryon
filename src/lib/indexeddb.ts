@@ -5,6 +5,11 @@ const DB_VERSION = 2; // 版本号增加，触发升级
 const STORE_NAME = 'clothes';
 const PROFILE_STORE = 'profile';
 
+type IndexedDbRecord = {
+  id: string;
+  [key: string]: unknown;
+};
+
 let db: IDBDatabase | null = null;
 let initPromise: Promise<IDBDatabase> | null = null;
 
@@ -71,7 +76,7 @@ export async function initDB(): Promise<IDBDatabase> {
 }
 
 // 保存衣服到 IndexedDB
-export async function saveCloth(cloth: any): Promise<void> {
+export async function saveCloth(cloth: IndexedDbRecord): Promise<void> {
   const database = await initDB();
   
   return new Promise((resolve, reject) => {
@@ -85,7 +90,7 @@ export async function saveCloth(cloth: any): Promise<void> {
 }
 
 // 获取所有衣服
-export async function getAllClothes(): Promise<any[]> {
+export async function getAllClothes(): Promise<IndexedDbRecord[]> {
   const database = await initDB();
   
   return new Promise((resolve, reject) => {
@@ -113,7 +118,7 @@ export async function deleteCloth(id: string): Promise<void> {
 }
 
 // 保存用户资料
-export async function saveProfile(profile: any): Promise<void> {
+export async function saveProfile(profile: IndexedDbRecord): Promise<void> {
   const database = await initDB();
   
   return new Promise((resolve, reject) => {
@@ -127,7 +132,7 @@ export async function saveProfile(profile: any): Promise<void> {
 }
 
 // 获取用户资料
-export async function getProfile(id: string): Promise<any | null> {
+export async function getProfile(id: string): Promise<IndexedDbRecord | null> {
   const database = await initDB();
   
   return new Promise((resolve, reject) => {
@@ -141,7 +146,7 @@ export async function getProfile(id: string): Promise<any | null> {
 }
 
 // 获取所有用户资料（支持多人像）
-export async function getAllProfiles(): Promise<any[]> {
+export async function getAllProfiles(): Promise<IndexedDbRecord[]> {
   const database = await initDB();
   
   return new Promise((resolve, reject) => {
@@ -249,7 +254,7 @@ export async function clearAllStorage(): Promise<void> {
   // 初始化数据库以确保连接
   const database = await initDB();
   
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     // 清除 clothes store
     const clothesTransaction = database.transaction([STORE_NAME], 'readwrite');
     const clothesStore = clothesTransaction.objectStore(STORE_NAME);

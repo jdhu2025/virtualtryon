@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Download, Share2, Heart, Sparkles, Copy, Check } from "lucide-react";
+import { ArrowLeft, Download, Share2, Heart, Sparkles, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RemoteImage } from "@/components/remote-image";
+import { useLocale } from "@/contexts/locale-context";
+import { translateCategory, translateScene, t } from "@/lib/locale";
 
 interface ShareData {
   title: string;
@@ -22,18 +25,14 @@ interface ShareData {
 
 export default function SharePage() {
   const params = useParams();
+  const { locale } = useLocale();
   const outfitId = params.id as string;
   const [shareData, setShareData] = useState<ShareData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    // 尝试从 API 获取分享数据
-    loadShareData();
-  }, [outfitId]);
-
-  const loadShareData = async () => {
+  const loadShareData = useCallback(async () => {
     try {
       const response = await fetch(`/api/share?id=${outfitId}`);
       if (response.ok) {
@@ -47,7 +46,11 @@ export default function SharePage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [outfitId]);
+
+  useEffect(() => {
+    void loadShareData();
+  }, [loadShareData]);
 
   const handleShare = async () => {
     if (!shareData) return;
@@ -59,7 +62,7 @@ export default function SharePage() {
           text: shareData.description,
           url: window.location.href,
         });
-      } catch (error) {
+      } catch {
         // 用户取消分享
       }
     } else {
@@ -87,32 +90,6 @@ export default function SharePage() {
     }
   };
 
-  const getSceneLabel = (scene: string) => {
-    const sceneMap: Record<string, string> = {
-      meeting: "会议",
-      date: "约会",
-      casual: "日常",
-      party: "派对",
-      travel: "旅行",
-      work: "办公",
-    };
-    return sceneMap[scene] || scene;
-  };
-
-  const getCategoryLabel = (category: string) => {
-    const categoryMap: Record<string, string> = {
-      tops: "上装",
-      bottoms: "下装",
-      dresses: "裙装",
-      outerwear: "外套",
-      shoes: "鞋子",
-      bags: "包包",
-      accessories: "配饰",
-      hats: "帽子",
-    };
-    return categoryMap[category] || category;
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
@@ -120,7 +97,7 @@ export default function SharePage() {
         <div className="flex items-center justify-between">
           <Link href="/" className="flex items-center text-gray-600 hover:text-gray-900">
             <ArrowLeft className="h-5 w-5 mr-2" />
-            <span className="text-sm">返回首页</span>
+            <span className="text-sm">{t(locale, "Back home", "返回首页")}</span>
           </Link>
           <button
             onClick={handleShare}
@@ -148,9 +125,11 @@ export default function SharePage() {
             {/* 穿搭效果图 */}
             <Card className="overflow-hidden">
               {shareData.imageUrl ? (
-                <img
+                <RemoteImage
                   src={shareData.imageUrl}
                   alt="穿搭效果"
+                  width={1200}
+                  height={1600}
                   className="w-full object-cover"
                 />
               ) : (
@@ -163,7 +142,7 @@ export default function SharePage() {
             {/* 场景标签 */}
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 bg-pink-100 text-pink-600 rounded-full text-sm">
-                {getSceneLabel(shareData.scene)}
+                {translateScene(shareData.scene, locale)}
               </span>
               <span className="text-sm text-gray-500">by {shareData.userName}</span>
             </div>
@@ -177,12 +156,12 @@ export default function SharePage() {
             {/* 搭配单品 */}
             {shareData.items.length > 0 && (
               <Card className="p-4">
-                <h3 className="font-medium text-gray-900 mb-3">搭配单品</h3>
+                <h3 className="font-medium text-gray-900 mb-3">{t(locale, "Selected pieces", "搭配单品")}</h3>
                 <div className="space-y-3">
                   {shareData.items.map((item, index) => (
                     <div key={index} className="flex items-start gap-3">
                       <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">
-                        {getCategoryLabel(item.category)}
+                        {translateCategory(item.category, locale)}
                       </span>
                       <span className="text-sm text-gray-600">{item.description}</span>
                     </div>
@@ -199,7 +178,7 @@ export default function SharePage() {
                 onClick={() => setIsLiked(!isLiked)}
               >
                 <Heart className={`h-4 w-4 mr-2 ${isLiked ? "fill-pink-500 text-pink-500" : ""}`} />
-                {isLiked ? "已收藏" : "收藏"}
+                {isLiked ? t(locale, "Saved", "已收藏") : t(locale, "Save", "收藏")}
               </Button>
               {shareData.imageUrl && (
                 <Button
@@ -208,7 +187,7 @@ export default function SharePage() {
                   onClick={handleDownload}
                 >
                   <Download className="h-4 w-4 mr-2" />
-                  下载图片
+                  {t(locale, "Download image", "下载图片")}
                 </Button>
               )}
             </div>
@@ -220,13 +199,13 @@ export default function SharePage() {
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-semibold">AI 穿搭助手</h3>
-                  <p className="text-xs text-pink-100">发现你已经拥有的美</p>
+                  <h3 className="font-semibold">{t(locale, "AI Outfit Assistant", "AI 穿搭助手")}</h3>
+                  <p className="text-xs text-pink-100">{t(locale, "Discover the beauty you already own", "发现你已经拥有的美")}</p>
                 </div>
               </div>
               <Link href="/">
                 <Button variant="secondary" className="w-full mt-3">
-                  立即体验
+                  {t(locale, "Try it now", "立即体验")}
                 </Button>
               </Link>
             </Card>
@@ -234,12 +213,12 @@ export default function SharePage() {
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Sparkles className="h-12 w-12 text-gray-300 mb-4" />
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">分享不存在</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">{t(locale, "Share not found", "分享不存在")}</h2>
             <p className="text-sm text-gray-500 mb-6">
-              该穿搭分享可能已被删除或不存在
+              {t(locale, "This shared outfit may have been deleted or never existed.", "该穿搭分享可能已被删除或不存在")}
             </p>
             <Link href="/">
-              <Button variant="outline">返回首页</Button>
+              <Button variant="outline">{t(locale, "Back home", "返回首页")}</Button>
             </Link>
           </div>
         )}

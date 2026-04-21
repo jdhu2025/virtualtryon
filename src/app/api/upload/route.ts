@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSignedUrl, uploadFileGetKey } from "@/storage/s3-storage";
 import { getSessionFromRequest } from "@/lib/server-session";
 import { formatStorageErrorMessage } from "@/lib/supabase-error";
+import { t } from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
+import { requireTurnstile } from "@/lib/turnstile";
 
 /**
  * 图片上传 API
@@ -22,6 +25,12 @@ import { formatStorageErrorMessage } from "@/lib/supabase-error";
  */
 export async function POST(request: NextRequest) {
   try {
+    const locale = getLocaleFromRequest(request);
+    const turnstileResponse = await requireTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
+    }
+
     const body = await request.json();
     const session = getSessionFromRequest(request);
     const { image, category = "wardrobe", userId } = body;
@@ -29,7 +38,7 @@ export async function POST(request: NextRequest) {
     
     if (!image) {
       return NextResponse.json(
-        { error: "缺少图片数据" },
+        { error: t(locale, "Missing image data.", "缺少图片数据") },
         { status: 400 }
       );
     }
@@ -37,7 +46,7 @@ export async function POST(request: NextRequest) {
     // 验证 category
     if (!["avatars", "wardrobe", "generated"].includes(category)) {
       return NextResponse.json(
-        { error: "无效的图片类别" },
+        { error: t(locale, "Invalid image category.", "无效的图片类别") },
         { status: 400 }
       );
     }
@@ -54,8 +63,13 @@ export async function POST(request: NextRequest) {
     
   } catch (error: unknown) {
     console.error("图片上传失败:", error);
+    const locale = getLocaleFromRequest(request);
     return NextResponse.json(
-      { error: "图片上传失败: " + formatStorageErrorMessage(error, "未知错误") },
+      {
+        error:
+          t(locale, "Image upload failed: ", "图片上传失败: ") +
+          formatStorageErrorMessage(error, t(locale, "Unknown error", "未知错误")),
+      },
       { status: 500 }
     );
   }

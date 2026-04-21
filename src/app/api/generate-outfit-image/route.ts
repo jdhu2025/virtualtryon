@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ImageGenerationClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
-import { uploadImageFromBase64, uploadFromUrl } from "@/storage/s3-storage";
+import { resolveStoredFileUrl, uploadImageFromBase64, uploadFromUrl } from "@/storage/s3-storage";
 import { getSupabaseClient } from "@/storage/database/supabase-client";
 import { getUserIdFromRequest } from "@/lib/server-session";
+import { generateVirtualTryOn } from "@/lib/ai/virtual-tryon";
+import {
+  t,
+  translateCategory,
+  translateColor,
+  type Locale,
+} from "@/lib/locale";
+import { getLocaleFromRequest } from "@/lib/locale-server";
+import { requireTurnstile } from "@/lib/turnstile";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 /**
  * 智能穿搭搭配 + 虚拟试衣 v2
@@ -16,32 +24,199 @@ export const maxDuration = 60;
  * 3. 真实试穿：衣服复制到模特身上
  */
 
+type RequirementMode = "meeting" | "date" | "party" | "sport" | "casual";
+type ReplaceCategory = "tops" | "bottoms";
+
+interface WardrobeItemData {
+  id: string;
+  category: string;
+  image_url: string;
+  color?: string | null;
+  ai_description?: string | null;
+  user_description?: string | null;
+  style_tags?: string[];
+  scenes?: string[];
+}
+
+interface AvatarReferenceData {
+  id?: string;
+  avatar_url: string;
+  nickname?: string;
+}
+
+interface GenerateOutfitImageRequestBody {
+  message?: string;
+  wardrobeItems?: WardrobeItemData[];
+  avatars?: AvatarReferenceData[];
+  userId?: string;
+  lockedItemIds?: string[];
+  baseOutfitItemIds?: string[];
+  replaceCategory?: ReplaceCategory;
+  replaceWithItemId?: string;
+}
+
+interface MatchedWardrobeItems {
+  tops: WardrobeItemData[];
+  bottoms: WardrobeItemData[];
+  dresses: WardrobeItemData[];
+  outerwear: WardrobeItemData[];
+  shoes: WardrobeItemData[];
+  accessories: WardrobeItemData[];
+  bags: WardrobeItemData[];
+  hats: WardrobeItemData[];
+}
+
+interface OutfitResultItem {
+  id: string;
+  category: string;
+  image_url: string;
+  ai_description: string;
+}
+
+interface OutfitResponseResult {
+  style: string;
+  scene: string;
+  outfitType: string;
+  reason: string;
+  items: OutfitResultItem[];
+  imageUrl: string | null;
+  personUrl: string;
+  generationMethod: string;
+  clothing: string;
+  generationError?: string;
+  outfitId?: string;
+}
+
+const MAX_TRY_ON_AVATAR_REFERENCES = 1;
+const MAX_TRY_ON_GARMENT_REFERENCES = 2;
+
+async function normalizeReferenceImageUrl(url: string): Promise<string> {
+  if (!url || url.startsWith("data:")) {
+    return url;
+  }
+
+  return resolveStoredFileUrl(url);
+}
+
+function containsAny(value: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => value.includes(keyword));
+}
+
+function detectRequirementMode(requirement: string): RequirementMode {
+  const value = requirement.toLowerCase();
+
+  if (
+    containsAny(value, [
+      "职场",
+      "会议",
+      "上班",
+      "正式",
+      "work",
+      "office",
+      "meeting",
+      "business",
+      "professional",
+      "formal",
+    ])
+  ) {
+    return "meeting";
+  }
+
+  if (
+    containsAny(value, [
+      "约会",
+      "浪漫",
+      "晚宴",
+      "date",
+      "romantic",
+      "dinner",
+      "feminine",
+    ])
+  ) {
+    return "date";
+  }
+
+  if (
+    containsAny(value, [
+      "派对",
+      "聚会",
+      "party",
+      "night out",
+      "celebration",
+    ])
+  ) {
+    return "party";
+  }
+
+  if (
+    containsAny(value, [
+      "运动",
+      "健身",
+      "sport",
+      "sports",
+      "gym",
+      "workout",
+      "athletic",
+    ])
+  ) {
+    return "sport";
+  }
+
+  return "casual";
+}
+
+function getStyleLabel(mode: RequirementMode, locale: Locale): string {
+  switch (mode) {
+    case "meeting":
+      return t(locale, "Sharp workwear", "干练职场");
+    case "date":
+      return t(locale, "Elegant date look", "优雅约会");
+    case "party":
+      return t(locale, "Statement party look", "时尚派对");
+    case "sport":
+      return t(locale, "Active easy look", "活力运动");
+    default:
+      return t(locale, "Effortless casual", "休闲日常");
+  }
+}
+
+function getGenerationMethodLabel(provider: string | undefined, locale: Locale): string {
+  switch (provider) {
+    case "volcengine":
+      return t(locale, "Virtual try-on (Volcengine)", "虚拟试衣（火山）");
+    case "modelscope":
+      return t(locale, "Rendered outfit (ModelScope)", "效果图（ModelScope）");
+    case "bailian":
+      return t(locale, "Virtual try-on (Bailian)", "虚拟试衣（阿里）");
+    case "fashn":
+      return t(locale, "Virtual try-on (FASHN)", "虚拟试衣（FASHN）");
+    case "vertex":
+      return t(locale, "Virtual try-on (Vertex)", "虚拟试衣（Vertex）");
+    case "coze":
+      return t(locale, "Virtual try-on (multi-reference)", "虚拟试衣（多图参考）");
+    default:
+      return t(locale, "Styled outfit", "搭配展示");
+  }
+}
+
+function getClothingSummary(items: WardrobeItemData[], locale: Locale): string {
+  return items
+    .map((item) => {
+      const color = translateColor(item.color, locale);
+      const category = translateCategory(item.category, locale);
+      return [color, category].filter(Boolean).join(" ").trim() || t(locale, "item", "单品");
+    })
+    .join(locale === "zh" ? " + " : " + ");
+}
+
 /**
  * 匹配用户需求的衣服
  */
 function matchClothesByRequirement(
-  items: any[], 
+  items: WardrobeItemData[],
   requirement: string
-): {
-  tops: any[];
-  bottoms: any[];
-  dresses: any[];
-  outerwear: any[];
-  shoes: any[];
-  accessories: any[];
-  bags: any[];
-  hats: any[];
-} {
-  const result: {
-    tops: any[];
-    bottoms: any[];
-    dresses: any[];
-    outerwear: any[];
-    shoes: any[];
-    accessories: any[];
-    bags: any[];
-    hats: any[];
-  } = {
+): MatchedWardrobeItems {
+  const result: MatchedWardrobeItems = {
     tops: [],
     bottoms: [],
     dresses: [],
@@ -53,30 +228,31 @@ function matchClothesByRequirement(
   };
   
   const reqLower = requirement.toLowerCase();
+  const mode = detectRequirementMode(reqLower);
   
   // 判断用户需求的风格
   let targetStyles: string[] = [];
-  let targetScenes: string[] = [];
+  const targetScenes: string[] = [];
   
-  if (reqLower.includes('职场') || reqLower.includes('会议') || reqLower.includes('上班') || reqLower.includes('正式')) {
-    targetStyles.push('formal', '正式', '职业');
-    targetScenes.push('meeting', 'work');
+  if (mode === "meeting") {
+    targetStyles.push("formal", "正式", "职业", "office", "professional");
+    targetScenes.push("meeting", "work", "office");
   }
-  if (reqLower.includes('约会') || reqLower.includes('浪漫') || reqLower.includes('晚宴')) {
-    targetStyles.push('elegant', '优雅', '约会');
-    targetScenes.push('date', 'romantic');
+  if (mode === "date") {
+    targetStyles.push("elegant", "优雅", "约会", "romantic", "feminine");
+    targetScenes.push("date", "romantic", "evening");
   }
-  if (reqLower.includes('休闲') || reqLower.includes('日常') || reqLower.includes('逛街')) {
-    targetStyles.push('casual', '休闲', '日常');
-    targetScenes.push('casual', 'daily');
+  if (mode === "casual") {
+    targetStyles.push("casual", "休闲", "日常", "minimalist", "daily");
+    targetScenes.push("casual", "daily", "travel");
   }
-  if (reqLower.includes('派对') || reqLower.includes('聚会')) {
-    targetStyles.push('party', '时尚', '派对');
-    targetScenes.push('party');
+  if (mode === "party") {
+    targetStyles.push("party", "时尚", "派对", "chic", "statement");
+    targetScenes.push("party", "evening");
   }
-  if (reqLower.includes('运动') || reqLower.includes('健身')) {
-    targetStyles.push('sporty', '运动', '健身');
-    targetScenes.push('sport', 'gym');
+  if (mode === "sport") {
+    targetStyles.push("sporty", "运动", "健身", "athletic", "active");
+    targetScenes.push("sport", "gym", "outdoor");
   }
   
   // 如果没有指定，使用中性风格
@@ -86,19 +262,19 @@ function matchClothesByRequirement(
   
   // 按类别分组并匹配
   for (const item of items) {
-    const tags = (item.style_tags || []).map((t: string) => t.toLowerCase());
-    const desc = (item.ai_description || item.user_description || '').toLowerCase();
+    const tags = (item.style_tags || []).map((tag) => tag.toLowerCase());
+    const desc = (item.ai_description || item.user_description || "").toLowerCase();
     const category = item.category;
     
     // 检查是否匹配目标风格
-    const matchesStyle = targetStyles.some(style => 
-      tags.some((tag: string) => tag.includes(style.toLowerCase())) ||
+    const matchesStyle = targetStyles.some((style) =>
+      tags.some((tag) => tag.includes(style.toLowerCase())) ||
       desc.includes(style.toLowerCase())
     );
     
     // 检查是否匹配目标场景
-    const matchesScene = (item.scenes || []).some((s: string) => 
-      targetScenes.includes(s.toLowerCase())
+    const matchesScene = (item.scenes || []).some((scene) =>
+      targetScenes.includes(scene.toLowerCase())
     );
     
     if (matchesStyle || matchesScene) {
@@ -156,7 +332,7 @@ function isTopLikeCategory(category: string): boolean {
   return category === "tops" || category === "outerwear";
 }
 
-function belongsToReplaceCategory(item: any, category: "tops" | "bottoms"): boolean {
+function belongsToReplaceCategory(item: WardrobeItemData, category: ReplaceCategory): boolean {
   if (category === "tops") {
     return isTopLikeCategory(item.category);
   }
@@ -164,10 +340,10 @@ function belongsToReplaceCategory(item: any, category: "tops" | "bottoms"): bool
 }
 
 function getCategoryCandidates(
-  category: "tops" | "bottoms",
-  matched: ReturnType<typeof matchClothesByRequirement>,
-  allItems: any[]
-): any[] {
+  category: ReplaceCategory,
+  matched: MatchedWardrobeItems,
+  allItems: WardrobeItemData[]
+): WardrobeItemData[] {
   const matchedCandidates =
     category === "tops"
       ? [...matched.tops, ...matched.outerwear]
@@ -180,7 +356,7 @@ function getCategoryCandidates(
   return [...matchedCandidates, ...fallbackCandidates];
 }
 
-function pickFirstAvailable(candidates: any[], excludedIds: Set<string>): any | null {
+function pickFirstAvailable(candidates: WardrobeItemData[], excludedIds: Set<string>): WardrobeItemData | null {
   for (const candidate of candidates) {
     if (!candidate?.id) continue;
     if (!excludedIds.has(candidate.id)) {
@@ -197,7 +373,7 @@ function pickFirstAvailable(candidates: any[], excludedIds: Set<string>): any | 
   return null;
 }
 
-function sortOutfitItems(items: any[]): any[] {
+function sortOutfitItems(items: WardrobeItemData[]): WardrobeItemData[] {
   const priority: Record<string, number> = {
     dresses: 10,
     tops: 20,
@@ -212,32 +388,80 @@ function sortOutfitItems(items: any[]): any[] {
   return [...items].sort((a, b) => (priority[a.category] || 999) - (priority[b.category] || 999));
 }
 
+function isTryOnCoreCategory(category: string): boolean {
+  return category === "dresses" || category === "tops" || category === "outerwear" || category === "bottoms";
+}
+
+function selectTryOnReferenceItems(items: WardrobeItemData[]): WardrobeItemData[] {
+  const sortedItems = sortOutfitItems(items);
+  const selected: WardrobeItemData[] = [];
+  const selectedIds = new Set<string>();
+
+  const addItem = (item: WardrobeItemData | undefined) => {
+    if (!item?.id || selectedIds.has(item.id)) return;
+    selected.push(item);
+    selectedIds.add(item.id);
+  };
+
+  const dress = sortedItems.find((item) => item.category === "dresses");
+  if (dress) {
+    addItem(dress);
+  } else {
+    addItem(sortedItems.find((item) => item.category === "tops"));
+    addItem(sortedItems.find((item) => item.category === "bottoms"));
+
+    if (selected.length === 0) {
+      addItem(sortedItems.find((item) => item.category === "outerwear"));
+    }
+  }
+
+  if (selected.length < MAX_TRY_ON_GARMENT_REFERENCES) {
+    for (const item of sortedItems) {
+      if (!isTryOnCoreCategory(item.category)) continue;
+      addItem(item);
+      if (selected.length >= MAX_TRY_ON_GARMENT_REFERENCES) {
+        break;
+      }
+    }
+  }
+
+  if (selected.length === 0) {
+    for (const item of sortedItems) {
+      addItem(item);
+      if (selected.length >= MAX_TRY_ON_GARMENT_REFERENCES) {
+        break;
+      }
+    }
+  }
+
+  return selected.slice(0, MAX_TRY_ON_GARMENT_REFERENCES);
+}
+
 /**
  * 构建穿搭方案 - 智能组合
  */
 function buildOutfit(
-  matched: ReturnType<typeof matchClothesByRequirement>,
-  requirement: string,
-  allItems: any[],
+  matched: MatchedWardrobeItems,
+  allItems: WardrobeItemData[],
   options?: {
-    lockedItems?: any[];
-    baseItems?: any[];
-    replaceCategory?: "tops" | "bottoms";
-    replaceWithItem?: any | null;
+    lockedItems?: WardrobeItemData[];
+    baseItems?: WardrobeItemData[];
+    replaceCategory?: ReplaceCategory;
+    replaceWithItem?: WardrobeItemData | null;
   }
 ): {
-  items: any[];
+  items: WardrobeItemData[];
   description: string;
   outfitType: string;
 } {
-  const items: any[] = [];
+  const items: WardrobeItemData[] = [];
   const selectedIds = new Set<string>();
   const lockedItems = options?.lockedItems || [];
   const baseItems = options?.baseItems || [];
   const replaceCategory = options?.replaceCategory;
   const replaceWithItem = options?.replaceWithItem || null;
 
-  const addItem = (item: any | null) => {
+  const addItem = (item: WardrobeItemData | null) => {
     if (!item?.id || selectedIds.has(item.id)) return;
     items.push(item);
     selectedIds.add(item.id);
@@ -322,111 +546,35 @@ function buildOutfit(
  * 核心：只复制，不创造 - 100%基于参考图
  */
 function generateTryOnPrompt(
-  outfitItems: any[],
-  outfitType: string,
-  requirement: string,
-  personUrl: string,
-  clothingUrls: string[]
+  outfitItems: WardrobeItemData[],
+  avatarReferenceCount: number
 ): { prompt: string } {
-  
-  // 构建服装描述
-  const clothingInfo = outfitItems.map((item, i) => {
+  const clothingInfo = outfitItems.map((item) => {
     const color = item.color || 'this color';
     const category = item.category;
-    return `Image ${i + 2}: ${color} ${category}`;
+    return `${color} ${category}`;
   }).join(', ');
-  
-  // 根据需求调整场景
-  let sceneDesc = 'simple plain background';
-  if (requirement.includes('职场') || requirement.includes('会议') || requirement.includes('正式')) {
-    sceneDesc = 'clean office background';
-  } else if (requirement.includes('约会') || requirement.includes('浪漫')) {
-    sceneDesc = 'soft indoor background';
-  }
-  
-  // 极简提示词 - 只复制，不创造
-  const prompt = `Take the person from Image 1.
-Take the clothes from Images 2-${clothingUrls.length + 1}.
-Put the clothes ON the person.
-DO NOT add anything that is not in the reference images.
-DO NOT change anything.
-Output: The same person wearing the same clothes.`;
+
+  const clothingStartIndex = avatarReferenceCount + 1;
+  const clothingEndIndex = avatarReferenceCount + outfitItems.length;
+  const avatarLine =
+    avatarReferenceCount > 1
+      ? `Use the same person shown in Images 1-${avatarReferenceCount}. Image 1 is the main person photo and the others are extra reference photos of the same person.`
+      : "Use the person shown in Image 1.";
+  const clothingLine =
+    outfitItems.length > 1
+      ? `Use the clothing pieces from Images ${clothingStartIndex}-${clothingEndIndex}.`
+      : `Use the clothing piece from Image ${clothingStartIndex}.`;
+
+  const prompt = `${avatarLine}
+${clothingLine}
+Put those exact clothes on the person from Image 1.
+Keep the person's identity, face, body shape, pose, and background.
+Do not invent new garments, colors, layers, props, or accessories.
+Reference garments: ${clothingInfo}.
+Output one realistic photo of the same person wearing the referenced clothes.`;
 
   return { prompt };
-}
-
-async function fetchImageAsDataUrl(url: string, label: string): Promise<string> {
-  if (!url) {
-    throw new Error(`${label} 地址为空`);
-  }
-
-  if (url.startsWith("data:")) {
-    return url;
-  }
-
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      Accept: "image/*",
-      "User-Agent": "ai-outfit-assistant/1.0",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`${label} 下载失败: ${response.status} ${response.statusText}`);
-  }
-
-  const contentType = response.headers.get("content-type") || "image/jpeg";
-  const arrayBuffer = await response.arrayBuffer();
-  const base64 = Buffer.from(arrayBuffer).toString("base64");
-  return `data:${contentType};base64,${base64}`;
-}
-
-async function runWithoutProxy<T>(task: () => Promise<T>): Promise<T> {
-  const proxyKeys = [
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "all_proxy",
-  ] as const;
-
-  const previous = new Map<string, string | undefined>();
-  for (const key of proxyKeys) {
-    previous.set(key, process.env[key]);
-    delete process.env[key];
-  }
-
-  const previousNoProxy = process.env.NO_PROXY;
-  const previousNoProxyLower = process.env.no_proxy;
-  process.env.NO_PROXY = "*";
-  process.env.no_proxy = "*";
-
-  try {
-    return await task();
-  } finally {
-    for (const key of proxyKeys) {
-      const value = previous.get(key);
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-
-    if (previousNoProxy === undefined) {
-      delete process.env.NO_PROXY;
-    } else {
-      process.env.NO_PROXY = previousNoProxy;
-    }
-
-    if (previousNoProxyLower === undefined) {
-      delete process.env.no_proxy;
-    } else {
-      process.env.no_proxy = previousNoProxyLower;
-    }
-  }
 }
 
 function buildOutfitReason(
@@ -434,65 +582,109 @@ function buildOutfitReason(
   clothingCNStr: string,
   outfitType: string,
   options?: {
-    lockedItems?: any[];
-    replaceCategory?: "tops" | "bottoms";
-    replaceWithItem?: any | null;
+    locale?: Locale;
+    lockedItems?: WardrobeItemData[];
+    replaceCategory?: ReplaceCategory;
+    replaceWithItem?: WardrobeItemData | null;
   }
 ): string {
+  const locale = options?.locale || "en";
+  const mode = detectRequirementMode(requirement);
+  const outfitTypeLabel =
+    locale === "zh"
+      ? outfitType
+      : outfitType === "连衣裙"
+        ? "dress-led outfit"
+        : "top-and-bottom set";
   const direction =
-    requirement.includes("职场") || requirement.includes("会议") || requirement.includes("正式")
-      ? "优先保证利落、稳妥、适合见人"
-      : requirement.includes("约会") || requirement.includes("浪漫")
-        ? "优先保证柔和、有一点精致感"
-        : requirement.includes("运动") || requirement.includes("健身")
-          ? "优先保证轻松、方便活动"
-          : "优先保证日常耐看、不费劲";
+    mode === "meeting"
+      ? t(locale, "It keeps the outfit polished, reliable, and presentation-ready.", "优先保证利落、稳妥、适合见人")
+      : mode === "date"
+        ? t(locale, "It keeps the outfit soft, refined, and a little romantic.", "优先保证柔和、有一点精致感")
+        : mode === "sport"
+          ? t(locale, "It keeps the outfit easy, light, and movement-friendly.", "优先保证轻松、方便活动")
+          : mode === "party"
+            ? t(locale, "It keeps the outfit confident, expressive, and photo-ready.", "优先保证醒目、有氛围感")
+            : t(locale, "It keeps the outfit easy to wear and visually steady for everyday use.", "优先保证日常耐看、不费劲");
 
   const contextParts: string[] = [];
   if (options?.lockedItems && options.lockedItems.length > 0) {
     const lockedItem = options.lockedItems[0];
-    contextParts.push(`先保留了你指定的${lockedItem.color || ""}${lockedItem.category || "单品"}`);
+    contextParts.push(
+      t(
+        locale,
+        `We kept your chosen ${
+          [translateColor(lockedItem.color, locale), translateCategory(lockedItem.category || "", locale)]
+            .filter(Boolean)
+            .join(" ")
+            .trim() || "item"
+        } as the anchor piece`,
+        `先保留了你指定的${lockedItem.color || ""}${lockedItem.category || "单品"}`
+      )
+    );
   }
   if (options?.replaceCategory) {
     if (options.replaceWithItem) {
-      contextParts.push(`并把${options.replaceCategory === "tops" ? "上衣" : "裤子"}换成了指定那件`);
+      contextParts.push(
+        t(
+          locale,
+          `and swapped the ${options.replaceCategory === "tops" ? "top" : "bottom"} for your chosen piece`,
+          `并把${options.replaceCategory === "tops" ? "上衣" : "裤子"}换成了指定那件`
+        )
+      );
     } else {
-      contextParts.push(`并只调整了${options.replaceCategory === "tops" ? "上衣" : "裤子"}这一件`);
+      contextParts.push(
+        t(
+          locale,
+          `and only adjusted the ${options.replaceCategory === "tops" ? "top" : "bottom"}`,
+          `并只调整了${options.replaceCategory === "tops" ? "上衣" : "裤子"}这一件`
+        )
+      );
     }
   }
 
-  const prefix = contextParts.length > 0 ? `${contextParts.join("，")}。` : "";
-  return `${prefix}这套用了 ${clothingCNStr}，属于${outfitType}思路，${direction}。`;
+  const prefix =
+    contextParts.length > 0
+      ? locale === "zh"
+        ? `${contextParts.join("，")}。`
+        : `${contextParts.join(", ")}. `
+      : "";
+
+  return t(
+    locale,
+    `${prefix}This look uses ${clothingCNStr}, follows a ${outfitTypeLabel} direction, and ${direction.toLowerCase()}.`,
+    `${prefix}这套用了 ${clothingCNStr}，属于${outfitType}思路，${direction}。`
+  );
 }
 
 function inferSceneTag(requirement: string): string {
-  if (requirement.includes("职场") || requirement.includes("会议") || requirement.includes("正式")) {
-    return "meeting";
-  }
-  if (requirement.includes("约会") || requirement.includes("浪漫")) {
-    return "date";
-  }
-  if (requirement.includes("派对") || requirement.includes("聚会")) {
-    return "party";
-  }
-  if (requirement.includes("运动") || requirement.includes("健身")) {
-    return "casual";
-  }
+  const mode = detectRequirementMode(requirement);
+  if (mode === "meeting") return "meeting";
+  if (mode === "date") return "date";
+  if (mode === "party") return "party";
   return "casual";
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const {
-      message = '',
-      wardrobeItems = [],
-      avatars = [],
-      userId = "anonymous",
-      lockedItemIds = [],
-      baseOutfitItemIds = [],
-      replaceCategory,
-      replaceWithItemId,
-    } = await request.json();
+    const locale = getLocaleFromRequest(request);
+    const turnstileResponse = await requireTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
+    }
+
+    const body = (await request.json()) as GenerateOutfitImageRequestBody;
+    const message = typeof body.message === "string" ? body.message : "";
+    const wardrobeItems = Array.isArray(body.wardrobeItems) ? body.wardrobeItems : [];
+    const avatars = Array.isArray(body.avatars) ? body.avatars : [];
+    const userId = typeof body.userId === "string" ? body.userId : "anonymous";
+    const lockedItemIds = Array.isArray(body.lockedItemIds) ? body.lockedItemIds : [];
+    const baseOutfitItemIds = Array.isArray(body.baseOutfitItemIds) ? body.baseOutfitItemIds : [];
+    const replaceCategory =
+      body.replaceCategory === "tops" || body.replaceCategory === "bottoms"
+        ? body.replaceCategory
+        : undefined;
+    const replaceWithItemId = typeof body.replaceWithItemId === "string" ? body.replaceWithItemId : undefined;
     const sessionUserId = getUserIdFromRequest(request);
     const storageUserId = String(sessionUserId || userId || "anonymous");
     
@@ -506,14 +698,14 @@ export async function POST(request: NextRequest) {
     if (!wardrobeItems || wardrobeItems.length === 0) {
       return NextResponse.json({
         success: false,
-        error: '衣柜中没有衣服，请先添加衣服'
+        error: t(locale, "There are no clothes in the wardrobe yet.", "衣柜中没有衣服，请先添加衣服")
       }, { status: 400 });
     }
     
     if (!avatars || avatars.length === 0 || !avatars[0]?.avatar_url) {
       return NextResponse.json({
         success: false,
-        error: '请先上传人像照片'
+        error: t(locale, "Please upload at least one portrait first.", "请先上传人像照片")
       }, { status: 400 });
     }
     
@@ -524,6 +716,8 @@ export async function POST(request: NextRequest) {
         let url = avatar.avatar_url;
         if (url.startsWith('data:')) {
           url = await uploadImageFromBase64(url, "avatars", storageUserId);
+        } else {
+          url = await normalizeReferenceImageUrl(url);
         }
         processedAvatars.push(url);
       }
@@ -532,7 +726,7 @@ export async function POST(request: NextRequest) {
     if (processedAvatars.length === 0) {
       return NextResponse.json({
         success: false,
-        error: '请先上传人像照片'
+        error: t(locale, "Please upload at least one portrait first.", "请先上传人像照片")
       }, { status: 400 });
     }
     
@@ -540,7 +734,7 @@ export async function POST(request: NextRequest) {
     processedAvatars.forEach((url, i) => console.log(`- 第${i + 1}个人像:`, url));
     
     // ========== 第二步：处理所有衣服图片 ==========
-    const processedItems: any[] = [];
+    const processedItems: WardrobeItemData[] = [];
     for (const item of wardrobeItems) {
       if (item.image_url) {
         let url = item.image_url;
@@ -551,24 +745,23 @@ export async function POST(request: NextRequest) {
             console.error("上传单品失败:", e);
             continue;
           }
+        } else {
+          url = await normalizeReferenceImageUrl(url);
         }
         processedItems.push({ ...item, image_url: url });
       }
     }
     console.log("衣服图片处理完成:", processedItems.length, "件");
 
-    const lockedItems = Array.isArray(lockedItemIds)
-      ? processedItems.filter((item) => lockedItemIds.includes(item.id))
-      : [];
-    const baseItems = Array.isArray(baseOutfitItemIds)
-      ? processedItems.filter((item) => baseOutfitItemIds.includes(item.id))
-      : [];
+    const lockedItems = processedItems.filter((item) => lockedItemIds.includes(item.id));
+    const baseItems = processedItems.filter((item) => baseOutfitItemIds.includes(item.id));
     const replaceWithItem = replaceWithItemId
       ? processedItems.find((item) => item.id === replaceWithItemId) || null
       : null;
     
     // ========== 第三步：根据需求匹配衣服 ==========
-    const requirement = message || '休闲日常';
+    const requirement = message || t(locale, "casual everyday outfit", "休闲日常");
+    const requirementMode = detectRequirementMode(requirement);
     console.log("\n========== 匹配衣服 ==========");
     
     const matched = matchClothesByRequirement(processedItems, requirement);
@@ -581,10 +774,10 @@ export async function POST(request: NextRequest) {
     
     // ========== 第四步：构建穿搭方案 ==========
     console.log("\n========== 构建穿搭方案 ==========");
-    const { items: outfitItems, description, outfitType } = buildOutfit(matched, requirement, processedItems, {
+    const { items: outfitItems, description, outfitType } = buildOutfit(matched, processedItems, {
       lockedItems,
       baseItems,
-      replaceCategory: replaceCategory === "tops" || replaceCategory === "bottoms" ? replaceCategory : undefined,
+      replaceCategory,
       replaceWithItem,
     });
     console.log("穿搭方案:", { outfitType, description, items: outfitItems.length });
@@ -592,121 +785,96 @@ export async function POST(request: NextRequest) {
     if (outfitItems.length === 0) {
       return NextResponse.json({
         success: false,
-        error: '没有找到合适的衣服搭配'
+        error: t(locale, "No suitable outfit could be assembled.", "没有找到合适的衣服搭配")
       }, { status: 400 });
     }
     
     // ========== 第五步：生成虚拟试衣 ==========
     console.log("\n========== 生成虚拟试衣 ==========");
     
-    const config = new Config();
-    const customHeaders = HeaderUtils.extractForwardHeaders(request.headers);
-    const imageClient = new ImageGenerationClient(config, customHeaders);
-    
-    // 收集衣服图片URL
-    const clothingUrls = outfitItems.map(item => item.image_url);
-    console.log("衣服图片URL:", clothingUrls);
-    
-    // 生成提示词 - 使用第一个人像作为主要人像
+    const tryOnReferenceItems = selectTryOnReferenceItems(outfitItems);
+    const avatarReferences = processedAvatars.slice(0, MAX_TRY_ON_AVATAR_REFERENCES);
+    const referenceImages = [
+      ...avatarReferences,
+      ...tryOnReferenceItems.map((item) => item.image_url),
+    ];
+
+    console.log("试衣参考图:", {
+      avatars: avatarReferences.length,
+      clothes: tryOnReferenceItems.map((item) => ({
+        id: item.id,
+        category: item.category,
+        image_url: item.image_url,
+      })),
+    });
+
     const primaryAvatarUrl = processedAvatars[0];
-    const { prompt } = generateTryOnPrompt(outfitItems, outfitType, requirement, primaryAvatarUrl, clothingUrls);
+    const { prompt } = generateTryOnPrompt(tryOnReferenceItems, avatarReferences.length);
     console.log("提示词:", prompt.substring(0, 200) + "...");
     
     let resultImageUrl: string | null = null;
-    
-    // 使用多图参考：所有人像 + 所有衣服
-    // 图片数组顺序：人像在前，衣服在后
-    const allReferenceImages = await Promise.all([
-      ...processedAvatars.map((url, index) => fetchImageAsDataUrl(url, `人像 ${index + 1}`)),
-      ...clothingUrls.map((url, index) => fetchImageAsDataUrl(url, `衣服 ${index + 1}`)),
-    ]);
+    let generationError: string | null = null;
+    let generationMethod = t(locale, "Styled outfit", "搭配展示");
     
     try {
       console.log("开始生成...");
-      console.log("多图参考数量:", allReferenceImages.length);
-      processedAvatars.forEach((url, i) => console.log(`- 第${i + 1}张: 人像${i + 1}`));
-      clothingUrls.forEach((url, i) => console.log(`- 第${processedAvatars.length + i + 1}张: 衣服${i + 1}`));
-      
-      // 使用多图参考生成
-      const response = await runWithoutProxy(() =>
-        imageClient.generate({
-          prompt,
-          size: "2K",
-          image: allReferenceImages, // 多图参考！
-        })
+      console.log("多图参考数量:", referenceImages.length);
+      avatarReferences.forEach((url, i) => console.log(`- 第${i + 1}张: 人像${i + 1}`));
+      tryOnReferenceItems.forEach((item, i) =>
+        console.log(`- 第${avatarReferences.length + i + 1}张: ${item.category}`)
       );
-      
-      const helper = imageClient.getResponseHelper(response);
-      
-      if (helper.success && helper.imageUrls[0]) {
-        resultImageUrl = helper.imageUrls[0];
-        console.log("生成成功!");
-        
-        // 上传结果
+
+      const tryOnResult = await generateVirtualTryOn({
+        requestHeaders: request.headers,
+        personImageUrl: primaryAvatarUrl,
+        garmentImageUrls: tryOnReferenceItems.map((item) => item.image_url),
+        garmentCategories: tryOnReferenceItems.map((item) => item.category),
+        prompt,
+        referenceImages,
+      });
+
+      generationMethod = getGenerationMethodLabel(tryOnResult.provider, locale);
+
+      if (tryOnResult.imageUrl) {
+        resultImageUrl = tryOnResult.imageUrl;
+        console.log("生成成功! provider:", tryOnResult.provider);
+
         try {
-          resultImageUrl = await runWithoutProxy(() =>
-            uploadFromUrl(resultImageUrl!, "generated", storageUserId)
-          );
+          if (resultImageUrl.startsWith("data:")) {
+            resultImageUrl = await uploadImageFromBase64(resultImageUrl, "generated", storageUserId);
+          } else {
+            resultImageUrl = await uploadFromUrl(resultImageUrl, "generated", storageUserId);
+          }
           console.log("效果图上传成功:", resultImageUrl);
-        } catch (e) {
-          console.error("上传失败");
+        } catch (e: unknown) {
+          console.error("上传失败:", e instanceof Error ? e.message : e);
         }
       } else {
-        console.log("生成失败:", helper.errorMessages);
+        generationError = tryOnResult.error || t(locale, "The image service returned no result.", "图像服务未返回结果");
+        console.log("生成失败:", generationError, "provider:", tryOnResult.provider);
       }
-    } catch (e: any) {
-      console.error("生成异常:", e.message);
+    } catch (e: unknown) {
+      generationError = e instanceof Error ? e.message : t(locale, "Image generation failed.", "图像生成异常");
+      console.error("生成异常:", e);
     }
     
     // ========== 返回结果 ==========
     
     // 构建衣服描述
-    const clothingCNStr = outfitItems.map(item => {
-      const color = item.color || '彩色';
-      const category = item.category;
-      switch (category) {
-        case 'tops': return `${color}上装`;
-        case 'bottoms': return `${color}下装`;
-        case 'dresses': return `${color}连衣裙`;
-        case 'outerwear': return `${color}外套`;
-        case 'shoes': return `${color}鞋子`;
-        case 'accessories': return '配饰';
-        case 'bags': return `${color}包包`;
-        case 'hats': return `${color}帽子`;
-        default: return '单品';
-      }
-    }).join(' + ');
+    const clothingSummary = getClothingSummary(outfitItems, locale);
     
     // 默认不显示AI效果图（因为衣服会变形），只展示搭配方案
-    const results: Array<{
-      style: string;
-      scene: string;
-      outfitType: string;
-      reason: string;
-      items: Array<{
-        id: string;
-        category: string;
-        image_url: string;
-        ai_description: string;
-      }>;
-      imageUrl: string | null;
-      personUrl: string;
-      generationMethod: string;
-      clothing: string;
-      outfitId?: string;
-    }> = [{
-      style: requirement.includes('职场') ? '干练职场' :
-             requirement.includes('约会') ? '优雅约会' :
-             requirement.includes('派对') ? '时尚派对' :
-             requirement.includes('运动') ? '活力运动' : '休闲日常',
+    const results: OutfitResponseResult[] = [{
+      style: getStyleLabel(requirementMode, locale),
       scene: requirement,
       outfitType,
-      reason: buildOutfitReason(requirement, clothingCNStr, outfitType, {
+      reason: buildOutfitReason(requirement, clothingSummary, outfitType, {
+        locale,
         lockedItems,
-        replaceCategory: replaceCategory === "tops" || replaceCategory === "bottoms" ? replaceCategory : undefined,
+        replaceCategory,
         replaceWithItem,
       }),
-      items: outfitItems.map(item => ({
+      items: outfitItems.map((item) => ({
         id: item.id,
         category: item.category,
         image_url: item.image_url,
@@ -716,8 +884,9 @@ export async function POST(request: NextRequest) {
       imageUrl: resultImageUrl,
       // 人像照片
       personUrl: primaryAvatarUrl,
-      generationMethod: resultImageUrl ? '虚拟试衣（多图参考）' : '搭配展示',
-      clothing: clothingCNStr
+      generationMethod: resultImageUrl ? generationMethod : t(locale, "Styled outfit", "搭配展示"),
+      clothing: clothingSummary,
+      generationError: generationError || undefined,
     }];
 
     if (sessionUserId) {
@@ -770,7 +939,8 @@ export async function POST(request: NextRequest) {
     console.log("\n========== 完成 ==========");
     console.log("最终结果:", {
       hasImage: !!resultImageUrl,
-      itemsCount: outfitItems.length
+      itemsCount: outfitItems.length,
+      generationError,
     });
     
     return NextResponse.json({
@@ -780,15 +950,17 @@ export async function POST(request: NextRequest) {
         totalClothes: processedItems.length,
         matchedClothes: outfitItems.length,
         requirement,
-        personUrl: primaryAvatarUrl
+        personUrl: primaryAvatarUrl,
+        generationError,
       }
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error("智能穿搭失败:", error);
     return NextResponse.json({
       success: false,
-      error: '智能穿搭失败: ' + error.message
+      error: t(getLocaleFromRequest(request), "Outfit generation failed: ", "智能穿搭失败: ") + errorMessage
     }, { status: 500 });
   }
 }

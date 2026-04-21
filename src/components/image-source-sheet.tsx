@@ -1,6 +1,8 @@
 "use client";
 
 import { Camera, FolderOpen, Image as ImageIcon, X } from "lucide-react";
+import { useLocale } from "@/contexts/locale-context";
+import { t } from "@/lib/locale";
 
 interface ImageSourceSheetProps {
   open: boolean;
@@ -21,12 +23,14 @@ export function ImageSourceSheet({
   onChooseCamera,
   onChooseFile,
 }: ImageSourceSheetProps) {
+  const { locale } = useLocale();
+
   if (!open) return null;
 
   const options = [
-    { label: "照片图库", icon: ImageIcon, action: onChooseLibrary },
-    { label: "拍照", icon: Camera, action: onChooseCamera },
-    { label: "选取文件", icon: FolderOpen, action: onChooseFile },
+    { label: t(locale, "Photo library", "照片图库"), icon: ImageIcon, action: onChooseLibrary },
+    { label: t(locale, "Take photo", "拍照"), icon: Camera, action: onChooseCamera },
+    { label: t(locale, "Choose file", "选取文件"), icon: FolderOpen, action: onChooseFile },
   ];
 
   return (
@@ -50,7 +54,7 @@ export function ImageSourceSheet({
             type="button"
             onClick={onClose}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"
-            aria-label="关闭"
+            aria-label={t(locale, "Close", "关闭")}
           >
             <X className="h-4 w-4" />
           </button>

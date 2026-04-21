@@ -11,6 +11,7 @@
 
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -44,6 +45,12 @@ function assertStorageConfigured(): void {
   const missing = getMissingEnvVars();
   if (missing.length > 0) {
     throw new Error(`R2 存储未配置完整: 缺少 ${missing.join(", ")}`);
+  }
+}
+
+function assertPublicUrlConfigured(): void {
+  if (!PUBLIC_URL) {
+    throw new Error("R2 公网访问地址未配置完整: 缺少 CLOUDFLARE_R2_PUBLIC_URL");
   }
 }
 
@@ -117,9 +124,34 @@ function extractManagedKey(value: string | null | undefined): string | null {
   return decodePathSegments(value.slice(PUBLIC_URL.length + 1));
 }
 
+function extractProxyKey(value: string | null | undefined): string | null {
+  if (!value || !(value.startsWith("/") || value.startsWith("http://") || value.startsWith("https://"))) {
+    return null;
+  }
+
+  try {
+    const parsed = value.startsWith("/")
+      ? new URL(value, "http://local.storage")
+      : new URL(value);
+
+    if (parsed.pathname !== "/api/storage/object") {
+      return null;
+    }
+
+    const key = parsed.searchParams.get("key");
+    return key ? normalizeKey(key) : null;
+  } catch {
+    return null;
+  }
+}
+
 function getPublicUrl(key: string): string {
-  assertStorageConfigured();
+  assertPublicUrlConfigured();
   return `${PUBLIC_URL}/${encodePathSegments(normalizeKey(key))}`;
+}
+
+function getProxyUrl(key: string): string {
+  return `/api/storage/object?key=${encodeURIComponent(normalizeKey(key))}`;
 }
 
 function getExtensionFromMimeType(mimeType: string): string {
@@ -203,8 +235,60 @@ export async function resolveStoredFileUrl(
   value: string | null | undefined
 ): Promise<string> {
   if (!value) return "";
+
+  const proxyKey = extractProxyKey(value);
+  if (proxyKey) {
+    return PUBLIC_URL ? getPublicUrl(proxyKey) : getProxyUrl(proxyKey);
+  }
+
+  const managedKey = extractManagedKey(value);
+  if (managedKey) {
+    return PUBLIC_URL ? getPublicUrl(managedKey) : getProxyUrl(managedKey);
+  }
+
   if (isDirectUrl(value)) return value;
-  return getPublicUrl(value);
+  return PUBLIC_URL ? getPublicUrl(value) : getProxyUrl(value);
+}
+
+export async function readStoredFile(
+  value: string | null | undefined
+): Promise<{
+  buffer: Uint8Array;
+  contentType: string;
+  contentLength?: number;
+  lastModified?: Date;
+  etag?: string;
+}> {
+  const managedKey = extractManagedKey(value);
+  const key = managedKey || (value ? normalizeKey(value) : "");
+
+  if (!key) {
+    throw new Error("Missing storage key");
+  }
+
+  await ensureBucketAccessible();
+
+  const client = getClient();
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+    })
+  );
+
+  if (!response.Body) {
+    throw new Error("Storage object has no body");
+  }
+
+  const buffer = new Uint8Array(await response.Body.transformToByteArray());
+
+  return {
+    buffer,
+    contentType: response.ContentType || getMimeTypeFromFileName(key),
+    contentLength: response.ContentLength,
+    lastModified: response.LastModified,
+    etag: response.ETag,
+  };
 }
 
 /**
@@ -245,11 +329,21 @@ export async function getSignedUrl(keyOrUrl: string): Promise<string> {
     throw new Error("key is required");
   }
 
+  const proxyKey = extractProxyKey(keyOrUrl);
+  if (proxyKey) {
+    return PUBLIC_URL ? getPublicUrl(proxyKey) : getProxyUrl(proxyKey);
+  }
+
+  const managedKey = extractManagedKey(keyOrUrl);
+  if (managedKey) {
+    return PUBLIC_URL ? getPublicUrl(managedKey) : getProxyUrl(managedKey);
+  }
+
   if (isDirectUrl(keyOrUrl)) {
     return keyOrUrl;
   }
 
-  return getPublicUrl(keyOrUrl);
+  return PUBLIC_URL ? getPublicUrl(keyOrUrl) : getProxyUrl(keyOrUrl);
 }
 
 /**
