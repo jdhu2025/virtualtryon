@@ -122,20 +122,23 @@ export async function requireTurnstile(request: NextRequest) {
   }
 
   if (!result.success) {
+    const errorCodes = result["error-codes"] || [];
+
     if (isDevEnvironment()) {
       console.error("Turnstile verification failed:", {
-        errorCodes: result["error-codes"] || [],
+        errorCodes,
         hostname: result.hostname || null,
       });
     }
 
     return NextResponse.json(
       {
-        error: getVerificationErrorMessage(locale, result["error-codes"]),
+        error: getVerificationErrorMessage(locale, errorCodes),
+        turnstileErrorCodes: errorCodes,
         ...(isDevEnvironment()
           ? {
               turnstileDebug: {
-                errorCodes: result["error-codes"] || [],
+                errorCodes,
                 hostname: result.hostname || null,
               },
             }
