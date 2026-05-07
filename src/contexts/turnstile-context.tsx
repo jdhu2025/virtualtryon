@@ -1,6 +1,5 @@
 "use client";
 
-import Script from "next/script";
 import {
   createContext,
   useCallback,
@@ -80,6 +79,7 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
   const widgetIdRef = useRef<string | null>(null);
   const retryCountRef = useRef(0);
   const interactiveTimeoutCountRef = useRef(0);
+  const scriptPromiseRef = useRef<Promise<void> | null>(null);
   const pendingRef = useRef<{
     resolve: (token: string) => void;
     reject: (error: Error) => void;
@@ -192,11 +192,46 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
     setIsReady(true);
   }, [clearInteractiveState, locale, rejectPending, siteKey]);
 
-  useEffect(() => {
-    if (window.turnstile && siteKey) {
-      renderWidget();
+  const loadTurnstileScript = useCallback(() => {
+    if (window.turnstile) {
+      return Promise.resolve();
     }
 
+    if (scriptPromiseRef.current) {
+      return scriptPromiseRef.current;
+    }
+
+    scriptPromiseRef.current = new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        'script[src^="https://challenges.cloudflare.com/turnstile/v0/api.js"]'
+      );
+
+      if (existingScript) {
+        existingScript.addEventListener("load", () => resolve(), {
+          once: true,
+        });
+        existingScript.addEventListener(
+          "error",
+          () => reject(new Error("Failed to load Turnstile.")),
+          { once: true }
+        );
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src =
+        "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Failed to load Turnstile."));
+      document.head.appendChild(script);
+    });
+
+    return scriptPromiseRef.current;
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (window.turnstile && widgetIdRef.current) {
         window.turnstile.remove(widgetIdRef.current);
@@ -204,9 +239,15 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
       }
       clearInteractiveState();
     };
-  }, [clearInteractiveState, renderWidget, siteKey]);
+  }, [clearInteractiveState]);
 
-  const getToken = useCallback(() => {
+  const getToken = useCallback(async () => {
+    await loadTurnstileScript();
+
+    if (!widgetIdRef.current) {
+      renderWidget();
+    }
+
     return new Promise<string>((resolve, reject) => {
       if (!siteKey) {
         reject(
@@ -254,7 +295,7 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
       window.turnstile.reset(widgetIdRef.current);
       window.turnstile.execute(widgetIdRef.current);
     });
-  }, [locale, siteKey]);
+  }, [loadTurnstileScript, locale, renderWidget, siteKey]);
 
   return (
     <TurnstileContext.Provider
@@ -264,13 +305,6 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
         getToken,
       }}
     >
-      <Script
-        src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
-        strategy="afterInteractive"
-        onLoad={() => {
-          renderWidget();
-        }}
-      />
       {isInteractive ? (
         <>
           <div

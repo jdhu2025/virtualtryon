@@ -1,6 +1,3 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Shirt,
@@ -10,65 +7,23 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { LoggedInHome } from "@/components/home/logged-in-home";
-import { getCurrentUser } from "@/lib/auth-local";
+import { HomeClientShell } from "@/components/home/home-client-shell";
 import { SiteFooter } from "@/components/site-footer";
 import ShaderShowcase from "@/components/ui/hero";
-import { useLocale } from "@/contexts/locale-context";
-import { t } from "@/lib/locale";
+import { getServerLocale } from "@/lib/locale-server";
+import { t, type Locale } from "@/lib/locale";
 
-export default function HomePage() {
-  const { locale } = useLocale();
-  const [wardrobeCount, setWardrobeCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+export default async function HomePage() {
+  const locale = await getServerLocale();
 
-  useEffect(() => {
-    void loadUserData();
-  }, []);
-
-  const loadUserData = async () => {
-    try {
-      const user = getCurrentUser();
-      setIsLoggedIn(!!user);
-
-      if (user) {
-        const response = await fetch("/api/wardrobe");
-        if (response.ok) {
-          const data = await response.json();
-          setWardrobeCount((data.items || []).length);
-        } else {
-          setWardrobeCount(0);
-        }
-      } else {
-        setWardrobeCount(0);
-      }
-    } catch (error) {
-      console.error("加载用户数据失败:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="app-gradient-shell min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto h-10 w-10 animate-pulse rounded-2xl bg-[#d96d4f]" />
-          <p className="mt-4 text-sm text-[#8a6f5b]">{t(locale, "Preparing your space...", "正在准备页面...")}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isLoggedIn) {
-    return <MarketingLandingPage locale={locale} />;
-  }
-
-  return <AppHomePage wardrobeCount={wardrobeCount} isLoading={isLoading} locale={locale} />;
+  return (
+    <HomeClientShell locale={locale}>
+      <MarketingLandingPage locale={locale} />
+    </HomeClientShell>
+  );
 }
 
-function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
+function MarketingLandingPage({ locale }: { locale: Locale }) {
   const benefits = [
     {
       title: t(locale, "Less hesitation before you head out", "减少每天出门前的犹豫"),
@@ -148,18 +103,20 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
   ];
 
   return (
-    <div className="min-h-screen bg-[#fffaf5] text-[#1f2937]">
+    <div className="min-h-screen bg-[#f8f4ee] text-[#1f2937]">
       <ShaderShowcase locale={locale} />
 
-      <main className="bg-[#fffaf5]">
-        <section id="benefits" className="mx-auto max-w-7xl px-5 py-10 lg:px-8 lg:py-14">
-          <div className="rounded-[32px] bg-[#f1fbf6] px-6 py-8">
-            <p className="text-center text-sm font-medium uppercase tracking-[0.18em] text-[#5e8d78]">Benefits</p>
-            <h2 className="mt-3 text-center text-3xl font-semibold text-[#1f2937]">{t(locale, "Core advantages", "核心优势")}</h2>
-            <div className="mt-8 grid gap-4 lg:grid-cols-3">
+      <main className="bg-[#f8f4ee]">
+        <section id="benefits" className="mx-auto max-w-7xl px-5 py-14 lg:px-8 lg:py-18">
+          <div className="grid gap-8 border-y border-[#ded4c7] py-10 lg:grid-cols-[0.36fr_1fr] lg:items-start">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#4f8176]">Benefits</p>
+              <h2 className="mt-3 font-display text-4xl font-semibold text-[#171a15]">{t(locale, "Core advantages", "核心优势")}</h2>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
               {benefits.map((item) => (
-                <Card key={item.title} className="rounded-[24px] border-0 bg-white p-6 shadow-sm">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eff8f3] text-[#5e8d78]">
+                <Card key={item.title} className="rounded-lg border-[#ded4c7] bg-[#fffdf8] p-6 shadow-none">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[#e9f1ed] text-[#4f8176]">
                     <item.icon className="h-5 w-5" />
                   </div>
                   <h3 className="mt-5 text-lg font-semibold text-[#1f2937]">{item.title}</h3>
@@ -170,38 +127,38 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
           </div>
         </section>
 
-        <section id="features" className="mx-auto max-w-7xl px-5 py-10 lg:px-8 lg:py-16">
-          <div className="text-center">
-            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#b8684c]">Features</p>
-            <h2 className="mt-3 text-3xl font-semibold text-[#1f2937]">{t(locale, "How it works", "功能介绍")}</h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-[#6b5a4d]">
+        <section id="features" className="mx-auto max-w-7xl px-5 py-12 lg:px-8 lg:py-16">
+          <div className="max-w-3xl">
+            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#9a5834]">Features</p>
+            <h2 className="mt-3 font-display text-4xl font-semibold text-[#171a15]">{t(locale, "How it works", "功能介绍")}</h2>
+            <p className="mt-4 text-base leading-7 text-[#6b5a4d]">
               {t(locale, "From low-friction intake to daily outfit decisions to lightweight feedback memory, the focus stays on the moments people use most often.", "从低门槛录入，到今天穿什么，再到轻反馈记忆，重点都围绕真实使用频率最高的环节。")}
             </p>
           </div>
 
-          <div className="mt-10 grid gap-6">
+          <div className="mt-10 grid gap-3">
             {features.map((item, index) => (
               <div
                 key={item.title}
-                className={`grid gap-6 rounded-[32px] border border-[#eaded2] bg-white p-6 shadow-sm lg:grid-cols-[1fr_0.9fr] lg:items-center ${
+                className={`grid gap-6 border border-[#ded4c7] bg-[#fffdf8] p-5 lg:grid-cols-[1fr_0.9fr] lg:items-center ${
                   index % 2 === 1 ? "lg:grid-cols-[0.9fr_1fr]" : ""
                 }`}
               >
                 <div className={index % 2 === 1 ? "lg:order-2" : ""}>
-                  <p className="text-sm font-medium text-[#b8684c]">{item.eyebrow}</p>
+                  <p className="text-sm font-medium text-[#8f432d]">{item.eyebrow}</p>
                   <h3 className="mt-3 text-2xl font-semibold text-[#1f2937]">{item.title}</h3>
                   <p className="mt-4 text-base leading-7 text-[#6b5a4d]">{item.description}</p>
                 </div>
                 <div className={index % 2 === 1 ? "lg:order-1" : ""}>
-                  <div className="rounded-[28px] bg-[#f8f2ec] p-5">
-                    <div className="rounded-[22px] border border-[#eaded2] bg-white p-4 shadow-sm">
+                  <div className="bg-[#f1ebe2] p-4">
+                    <div className="border border-[#ded4c7] bg-white p-4 shadow-sm">
                       <div className="grid gap-3">
-                        <div className="h-10 rounded-2xl bg-[#fff7f1]" />
+                        <div className="h-10 rounded-md bg-[#fff7f1]" />
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="h-28 rounded-2xl bg-[#f4ebe3]" />
-                          <div className="h-28 rounded-2xl bg-[#f4ebe3]" />
+                          <div className="h-28 rounded-md bg-[#f4ebe3]" />
+                          <div className="h-28 rounded-md bg-[#f4ebe3]" />
                         </div>
-                        <div className="h-16 rounded-2xl bg-[#f4ebe3]" />
+                        <div className="h-16 rounded-md bg-[#f4ebe3]" />
                       </div>
                     </div>
                   </div>
@@ -211,13 +168,13 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-5 py-4 lg:px-8 lg:py-8">
-          <div className="rounded-[32px] bg-[#fff7cc] px-6 py-8">
-            <p className="text-center text-sm font-medium uppercase tracking-[0.18em] text-[#9f7d0a]">Signals</p>
-            <h2 className="mt-3 text-center text-3xl font-semibold text-[#1f2937]">{t(locale, "Early usage signals", "早期体验反馈")}</h2>
-            <div className="mt-8 grid gap-4">
+        <section className="mx-auto max-w-7xl px-5 py-10 lg:px-8">
+          <div className="border border-[#ded4c7] bg-[#171a15] px-6 py-9 text-white">
+            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#d8a172]">Signals</p>
+            <h2 className="mt-3 font-display text-4xl font-semibold">{t(locale, "Early usage signals", "早期体验反馈")}</h2>
+            <div className="mt-8 grid gap-3">
               {earlySignals.map((item) => (
-                <Card key={item} className="rounded-[24px] border-0 bg-[#fff4a8] px-5 py-4 text-[#5c4a18] shadow-none">
+                <Card key={item} className="rounded-lg border-white/10 bg-white/8 px-5 py-4 text-white/82 shadow-none">
                   {item}
                 </Card>
               ))}
@@ -225,16 +182,16 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
           </div>
         </section>
 
-        <section className="mx-auto max-w-6xl px-5 py-10 lg:px-8 lg:py-14">
-          <div className="rounded-[36px] border border-[#f1cfc2] bg-[#ffe8df] px-6 py-10 text-center shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#b8684c]">CTA</p>
-            <h2 className="mt-4 text-3xl font-semibold text-[#1f2937]">{t(locale, "Start with 1 portrait + 2 clothes", "先从 1 张人像 + 2 件衣服开始")}</h2>
+        <section className="mx-auto max-w-6xl px-5 py-12 lg:px-8 lg:py-16">
+          <div className="border border-[#d8cec0] bg-[#f1ebe2] px-6 py-10 text-center shadow-sm">
+            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[#9a5834]">CTA</p>
+            <h2 className="mt-4 font-display text-4xl font-semibold text-[#171a15]">{t(locale, "Start with 1 portrait + 2 clothes", "先从 1 张人像 + 2 件衣服开始")}</h2>
             <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-[#6b5a4d]">
               {t(locale, "Do not ask people to catalogue everything up front. Give value first, then ask for more data later.", "不要求用户先整理完整衣橱。先给价值，再要求补数据，才更符合真实使用习惯。")}
             </p>
             <div className="mt-8">
-              <Link href="/auth/register">
-                <Button className="rounded-full bg-[#d96d4f] px-8 py-6 text-base text-white hover:bg-[#bf5b3f]">
+              <Link href="/auth/register" prefetch={false}>
+                <Button className="rounded-md bg-[#a9472f] px-8 py-6 text-base text-white hover:bg-[#8f3b28]">
                   {t(locale, "Start free now", "立即开始免费试用")}
                 </Button>
               </Link>
@@ -242,22 +199,22 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
           </div>
         </section>
 
-        <section id="pricing" className="mx-auto max-w-7xl px-5 py-8 lg:px-8 lg:py-12">
-          <div className="rounded-[32px] border border-[#dad4f0] bg-[#ece8fb] px-6 py-8">
-            <p className="text-center text-sm font-medium uppercase tracking-[0.18em] text-[#6d5cc7]">Pricing</p>
-            <h2 className="mt-3 text-center text-3xl font-semibold text-[#1f2937]">{t(locale, "Pricing", "价格方案")}</h2>
+        <section id="pricing" className="mx-auto max-w-7xl px-5 py-8 lg:px-8 lg:py-14">
+          <div className="border border-[#ded4c7] bg-[#fffdf8] px-6 py-8">
+            <p className="text-center text-sm font-medium uppercase tracking-[0.18em] text-[#4f8176]">Pricing</p>
+            <h2 className="mt-3 text-center font-display text-4xl font-semibold text-[#171a15]">{t(locale, "Pricing", "价格方案")}</h2>
             <div className="mt-8 grid gap-4 lg:grid-cols-3">
               {pricing.map((item) => (
                 <Card
                   key={item.name}
-                  className={`rounded-[24px] border-0 p-6 ${
-                    item.featured ? "bg-[#cdbdf7] text-[#1f2937]" : "bg-white text-[#1f2937]"
+                  className={`rounded-lg p-6 shadow-none ${
+                    item.featured ? "border-[#4f8176] bg-[#e9f1ed] text-[#1f2937]" : "border-[#ded4c7] bg-white text-[#1f2937]"
                   }`}
                 >
                   <p className="text-lg font-semibold">{item.name}</p>
                   <p className="mt-3 text-3xl font-semibold">{item.price}</p>
-                  <p className="mt-2 text-sm text-[#6b5a4d]">{item.note}</p>
-                  <div className="mt-6 space-y-3 text-sm text-[#4b5563]">
+                  <p className="mt-2 text-sm text-[#4d4037]">{item.note}</p>
+                  <div className="mt-6 space-y-3 text-sm text-[#374151]">
                     {item.bullets.map((bullet) => (
                       <div key={bullet} className="flex items-start gap-2">
                         <CheckCircle2 className="mt-0.5 h-4 w-4 text-[#d96d4f]" />
@@ -273,23 +230,5 @@ function MarketingLandingPage({ locale }: { locale: "en" | "zh" }) {
       </main>
       <SiteFooter />
     </div>
-  );
-}
-
-function AppHomePage({
-  wardrobeCount,
-  isLoading,
-  locale,
-}: {
-  wardrobeCount: number;
-  isLoading: boolean;
-  locale: "en" | "zh";
-}) {
-  return (
-    <LoggedInHome
-      wardrobeCount={wardrobeCount}
-      isLoading={isLoading}
-      locale={locale}
-    />
   );
 }
